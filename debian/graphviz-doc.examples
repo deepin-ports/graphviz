@@ -1,0 +1,4 @@
+usr/share/graphviz/graphs
+usr/share/graphviz/demo
+# These probably needs GTK+
+#usr/share/graphviz/examples/*

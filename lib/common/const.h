@@ -1,20 +1,17 @@
-/* $Id$ $Revision$ */
-/* vim:set shiftwidth=4 ts=8: */
-
+/// @file
+/// @ingroup common_utils
 /*************************************************************************
  * Copyright (c) 2011 AT&T Intellectual Property 
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
- * http://www.eclipse.org/legal/epl-v10.html
+ * https://www.eclipse.org/legal/epl-v10.html
  *
- * Contributors: See CVS logs. Details at http://www.graphviz.org/
+ * Contributors: Details at https://graphviz.org
  *************************************************************************/
 
-#ifndef GV_CONST_H
-#define GV_CONST_H
+#pragma once
 
-#define SMALLBUF	128
 #define LPAREN		'('
 #define RPAREN		')'
 #define LBRACE		'{'
@@ -77,6 +74,8 @@
 #define		DEFAULT_NODEWIDTH	0.75
 #define		MIN_NODEWIDTH		0.01
 #define		DEFAULT_NODESHAPE	"ellipse"
+#define		DEFAULT_NODEPENWIDTH	1.0
+#define		MIN_NODEPENWIDTH	0.0
 
 #define		NODENAME_ESC		"\\N"
 
@@ -120,9 +119,6 @@
 #define		TOP		(1<<TOP_IX)
 #define		LEFT		(1<<LEFT_IX)
 
-#define CCW  -1			/* counter clock-wise */
-#define CW    1			/* clock-wise */
-
 /* Obj types  for renderers */
 #define		NONE    0
 #define		NODE    1
@@ -130,22 +126,13 @@
 #define		CLST    3
 
 /* output languages */
-#define		HPGL		2	/* HP Graphics Language */
 #define		PCL		3	/* Printer Control Language */
 #define		MIF		4	/* Adobe FrameMaker */
-#define		PIC_format	5	/* symbol PIC is used by compilers for 
-					   Position Independent Code */
-#define		TK		15	/* TK canvas */
 
 #define		VTX		21	/* visual thought */
 #define		METAPOST	22
-#define		DIA		24	/* dia drawing tool */
 
 #define		QPDF		30	/* Quartz paged PDF */
-#define		QEPDF		31	/* Quartz embedded PDF */
-
-#define		QBM_FIRST 100	/* first Quartz bitmap format, inclusive */
-#define		QBM_LAST 200	/* last Quartz bitmap format, exclusive */
 
 #define		GVRENDER_PLUGIN	300	/* a plugin supported language */
 #define		NO_SUPPORT	999	/* no support */
@@ -166,10 +153,6 @@
 #define SELFNPEDGE  8
 #define SELFEDGE    8
 #define EDGETYPEMASK	 15	/* the OR of the above */
-
-/* for graph server */
-#define		SERVER_NN	200
-#define		SERVER_NE	500
 
 /* for neato */
 #define Spring_coeff    1.0
@@ -205,49 +188,35 @@
 #define CHAR_LATIN1	1
 #define CHAR_BIG5	2
 
-/* style flags (0-23)*/
-#define FILLED		(1 << 0)
-#define RADIAL		(1 << 1)
-#define ROUNDED		(1 << 2)
-#define DIAGONALS	(1 << 3)
-#define AUXLABELS	(1 << 4)
-#define INVISIBLE	(1 << 5)
-#define STRIPED		(1 << 6)
-#define DOTTED		(1 << 7)
-#define DASHED		(1 << 8)
-#define WEDGED		(1 << 9)
-#define UNDERLINE	(1 << 10)
-#define FIXEDSHAPE	(1 << 11)
-
-#define SHAPE_MASK	(127 << 24)
-
-/* shape (1-127) */
-#define DOGEAR		(1 << 24)
-#define TAB		(2 << 24)
-#define FOLDER		(3 << 24)
-#define BOX3D		(4 << 24)
-#define COMPONENT	(5 << 24)
-#define PROMOTER	(6 << 24)
-#define CDS		(7 << 24)
-#define TERMINATOR	(8 << 24)
-#define UTR		(9 << 24)
-#define PRIMERSITE	(10 << 24)
-#define RESTRICTIONSITE	(11 << 24)
-#define FIVEPOVERHANG	(12 << 24)
-#define THREEPOVERHANG	(13 << 24)
-#define NOVERHANG	(14 << 24)
-#define ASSEMBLY	(15 << 24)
-#define SIGNATURE	(16 << 24)
-#define INSULATOR	(17 << 24)
-#define RIBOSITE	(18 << 24)
-#define RNASTAB		(19 << 24)
-#define PROTEASESITE	(20 << 24)
-#define PROTEINSTAB	(21 << 24)
-#define RPROMOTER	(22 << 24)
-#define RARROW		(23 << 24)
-#define LARROW		(24 << 24)
-#define LPROMOTER	(25 << 24)
-#define CYLINDER	(26 << 24)
+/// shape values, for `graphviz_polygon_style_t.shape`
+enum {
+  DOGEAR = 1,
+  TAB = 2,
+  FOLDER = 3,
+  BOX3D = 4,
+  COMPONENT = 5,
+  PROMOTER = 6,
+  CDS = 7,
+  TERMINATOR = 8,
+  UTR = 9,
+  PRIMERSITE = 10,
+  RESTRICTIONSITE = 11,
+  FIVEPOVERHANG = 12,
+  THREEPOVERHANG = 13,
+  NOVERHANG = 14,
+  ASSEMBLY = 15,
+  SIGNATURE = 16,
+  INSULATOR = 17,
+  RIBOSITE = 18,
+  RNASTAB = 19,
+  PROTEASESITE = 20,
+  PROTEINSTAB = 21,
+  RPROMOTER = 22,
+  RARROW = 23,
+  LARROW = 24,
+  LPROMOTER = 25,
+  CYLINDER = 26,
+};
 
 /* fill types */
 #define FILL      	1
@@ -255,25 +224,20 @@
 #define RGRADIENT 	3
 #define NO_POLY   	4    /* bit flag: if set, do fill only */
 
-/* label types */
-#define LT_NONE 	(0 << 1)
-#define LT_HTML 	(1 << 1)
-#define LT_RECD 	(2 << 1)
-
 /* Flags stored in GD_flags 
  * Bit(s):  0     unused
- *          1-3   ET_ 
+ *          1-3   EDGETYPE_
  *          4     NEW_RANK
  */
 
 /* edge types */
-#define ET_NONE 	(0 << 1)
-#define ET_LINE 	(1 << 1)
-#define ET_CURVED 	(2 << 1)
-#define ET_PLINE 	(3 << 1)
-#define ET_ORTHO 	(4 << 1)
-#define ET_SPLINE 	(5 << 1)
-#define ET_COMPOUND 	(6 << 1)
+#define EDGETYPE_NONE       (0 << 1)
+#define EDGETYPE_LINE       (1 << 1)
+#define EDGETYPE_CURVED     (2 << 1)
+#define EDGETYPE_PLINE      (3 << 1)
+#define EDGETYPE_ORTHO      (4 << 1)
+#define EDGETYPE_SPLINE     (5 << 1)
+#define EDGETYPE_COMPOUND   (6 << 1)
 
 /* New ranking is used */
 #define NEW_RANK    	(1 << 4)
@@ -290,5 +254,3 @@
 #define FONTSIZE_MUCH_TOO_SMALL 0.15
 /* fontsize at which text is rendered by a simple line */
 #define FONTSIZE_TOO_SMALL 1.5
-
-#endif

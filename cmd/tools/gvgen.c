@@ -1,14 +1,16 @@
-/* $Id$Revision: */
-/* vim:set shiftwidth=4 ts=8: */
+/**
+ * @file
+ * @brief generate graphs
+ */
 
 /*************************************************************************
  * Copyright (c) 2011 AT&T Intellectual Property 
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
- * http://www.eclipse.org/legal/epl-v10.html
+ * https://www.eclipse.org/legal/epl-v10.html
  *
- * Contributors: See CVS logs. Details at http://www.graphviz.org/
+ * Contributors: Details at https://graphviz.org
  *************************************************************************/
 
 /*
@@ -17,15 +19,17 @@
 
 #include "config.h"
 
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
-#ifdef HAVE_UNISTD_H
-#include <unistd.h>
-#endif
 #include <string.h>
+#include <time.h>
 #include <ctype.h>
 #include <getopt.h>
 #include "graph_generator.h"
+#include "openFile.h"
+#include <util/exit.h>
+#include <util/prisize_t.h>
 
 typedef enum { unknown, grid, circle, complete, completeb, 
     path, tree, torus, cylinder, mobius, randomg, randomt, ball,
@@ -33,11 +37,11 @@ typedef enum { unknown, grid, circle, complete, completeb,
 } GraphType;
 
 typedef struct {
-    int graphSize1;
-    int graphSize2;
-    int cnt;
-    int parm1;
-    int parm2;
+    unsigned graphSize1;
+    unsigned graphSize2;
+    unsigned cnt;
+    unsigned parm1;
+    unsigned parm2;
     int Verbose;
     int isPartial;
     int foldVal;
@@ -45,27 +49,10 @@ typedef struct {
     FILE *outfile;
     char* pfx;
     char* name;
+    unsigned seed; ///< initial state for random number generator
 } opts_t;
 
 static char *cmd;
-
-static FILE *openFile(char *name, char *mode)
-{
-    FILE *fp;
-    char *modestr;
-
-    fp = fopen(name, mode);
-    if (!fp) {
-	if (*mode == 'r')
-	    modestr = "reading";
-	else
-	    modestr = "writing";
-	fprintf(stderr, "%s: could not open file %s for %s\n",
-		cmd, name, modestr);
-	exit(1);
-    }
-    return fp;
-}
 
 static char *Usage = "Usage: %s [-dv?] [options]\n\
  -c<n>         : cycle \n\
@@ -92,6 +79,7 @@ static char *Usage = "Usage: %s [-dv?] [options]\n\
  -t<x>,<n>     : n-ary tree \n\
  -T<x,y>       : torus \n\
  -T<x,y,t1,t2> : twisted torus \n\
+ -u<seed>      : state for random number generation\n\
  -w<x>         : wheel\n\
  -d            : directed graph\n\
  -v            : verbose mode\n\
@@ -100,50 +88,44 @@ static char *Usage = "Usage: %s [-dv?] [options]\n\
 static void usage(int v)
 {
     fprintf(v ? stderr : stdout, Usage, cmd);
-    exit(v);
+    graphviz_exit(v);
 }
 
-static void errexit(char opt)
-{
-    fprintf(stderr, "in flag -%c\n", opt);
+static void errexit(int opt) {
+    fprintf(stderr, "in flag -%c\n", (char)opt);
     usage(1);
 }
 
 /* readPos:
- * Read and return a single int from s, guaranteed to be >= min.
+ * Read and return a single unsigned int from s, guaranteed to be >= 1.
  * A pointer to the next available character from s is stored in e.
- * Return -1 on error.
+ * Return 0 on error.
  */
-static int readPos(char *s, char **e, int min)
-{
-    int d;
+static unsigned readPos(char *s, char **e) {
+    static const unsigned MIN = 1;
 
-    d = strtol(s, e, 10);
-    if (s == *e) {
+    const unsigned long d = strtoul(s, e, 10);
+    if (s == *e || d > UINT_MAX) {
 	fprintf(stderr, "ill-formed integer \"%s\" ", s);
-	return -1;
+	return 0;
     }
-    if (d < min) {
-	fprintf(stderr, "integer \"%s\" less than %d", s, min);
-	return -1;
+    if (d < MIN) {
+	fprintf(stderr, "integer \"%s\" less than %d", s, MIN);
+	return 0;
     }
-    return d;
+    return (unsigned)d;
 }
 
 /* readOne:
  * Return non-zero on error.
  */
-static int readOne(char *s, int* ip)
-{
-    int d;
-    char *next;
-
-    d = readPos(s, &next, 1);
+static int readOne(char *s, unsigned *ip) {
+    const unsigned d = readPos(s, &(char *){NULL});
     if (d > 0) {
 	*ip = d;
 	return 0;
     }
-    else return d;
+    return -1;
 }
 
 /* setOne:
@@ -151,15 +133,7 @@ static int readOne(char *s, int* ip)
  */
 static int setOne(char *s, opts_t* opts)
 {
-    int d;
-    char *next;
-
-    d = readPos(s, &next, 1);
-    if (d > 0) {
-	opts->graphSize1 = d;
-	return 0;
-    }
-    else return d;
+  return readOne(s, &opts->graphSize1);
 }
 
 /* setTwo:
@@ -167,12 +141,11 @@ static int setOne(char *s, opts_t* opts)
  */
 static int setTwo(char *s, opts_t* opts)
 {
-    int d;
     char *next;
 
-    d = readPos(s, &next, 1);
-    if (d < 0)
-	return d;
+    unsigned d = readPos(s, &next);
+    if (d == 0)
+	return -1;
     opts->graphSize1 = d;
 
     if (*next != ',') {
@@ -181,12 +154,12 @@ static int setTwo(char *s, opts_t* opts)
     }
 
     s = next + 1;
-    d = readPos(s, &next, 1);
+    d = readPos(s, &(char *){NULL});
     if (d > 1) {
 	opts->graphSize2 = d;
 	return 0;
     }
-    else return d;
+    return -1;
 }
 
 /* setTwoTwoOpt:
@@ -194,14 +167,12 @@ static int setTwo(char *s, opts_t* opts)
  * Read 2 more optional numbers
  * Return non-zero on error.
  */
-static int setTwoTwoOpt(char *s, opts_t* opts, int dflt)
-{
-    int d;
+static int setTwoTwoOpt(char *s, opts_t *opts, unsigned dflt) {
     char *next;
 
-    d = readPos(s, &next, 1);
-    if (d < 0)
-	return d;
+    unsigned d = readPos(s, &next);
+    if (d == 0)
+	return -1;
     opts->graphSize1 = d;
 
     if (*next != ',') {
@@ -210,8 +181,8 @@ static int setTwoTwoOpt(char *s, opts_t* opts, int dflt)
     }
 
     s = next + 1;
-    d = readPos(s, &next, 1);
-    if (d < 1) {
+    d = readPos(s, &next);
+    if (d == 0) {
 	return 0;
     }
     opts->graphSize2 = d;
@@ -222,9 +193,9 @@ static int setTwoTwoOpt(char *s, opts_t* opts, int dflt)
     }
 
     s = next + 1;
-    d = readPos(s, &next, 1);
-    if (d < 0)
-	return d;
+    d = readPos(s, &next);
+    if (d == 0)
+	return -1;
     opts->parm1 = d;
 
     if (*next != ',') {
@@ -233,25 +204,18 @@ static int setTwoTwoOpt(char *s, opts_t* opts, int dflt)
     }
 
     s = next + 1;
-    d = readPos(s, &next, 1);
-    if (d < 0) {
-	return d;
-    }
-    opts->parm2 = d;
-    return 0;
+    return readOne(s, &opts->parm2);
 }
 
 /* setTwoOpt:
  * Return non-zero on error.
  */
-static int setTwoOpt(char *s, opts_t* opts, int dflt)
-{
-    int d;
+static int setTwoOpt(char *s, opts_t *opts, unsigned dflt) {
     char *next;
 
-    d = readPos(s, &next, 1);
-    if (d < 0)
-	return d;
+    unsigned d = readPos(s, &next);
+    if (d == 0)
+	return -1;
     opts->graphSize1 = d;
 
     if (*next != ',') {
@@ -260,12 +224,12 @@ static int setTwoOpt(char *s, opts_t* opts, int dflt)
     }
 
     s = next + 1;
-    d = readPos(s, &next, 1);
+    d = readPos(s, &(char *){NULL});
     if (d > 1) {
 	opts->graphSize2 = d;
 	return 0;
     }
-    else return d;
+    return -1;
 }
 
 static char* setFold(char *s, opts_t* opts)
@@ -282,7 +246,7 @@ static char* setFold(char *s, opts_t* opts)
     return next;
 }
 
-static char *optList = ":i:M:m:n:N:c:C:dg:G:h:k:b:B:o:p:r:R:s:S:X:t:T:vw:";
+static char *optList = ":i:M:m:n:N:c:C:dg:G:h:k:b:B:o:p:r:R:s:S:X:t:T:u:vw:";
 
 static GraphType init(int argc, char *argv[], opts_t* opts)
 {
@@ -313,17 +277,25 @@ static GraphType init(int argc, char *argv[], opts_t* opts)
 	    break;
 	case 'G':
 	    opts->isPartial = 1;
+	    // fall through
 	case 'g':
 	    graphType = grid;
 	    optarg = setFold (optarg, opts);
 	    if (setTwo(optarg, opts))
 		errexit(c);
 	    break;
-	case 'h':
+	case 'h': {
 	    graphType = hypercube;
 	    if (setOne(optarg, opts))
 		errexit(c);
+	    // detect if `1u << opts->graphSize1` in `makeHypercube` will overflow
+	    const size_t max_shift = sizeof(unsigned) * CHAR_BIT - 1;
+	    if (opts->graphSize1 > max_shift) {
+		fprintf(stderr, "depth of a hypercube must be < %" PRISIZE_T "\n", max_shift);
+		graphviz_exit(EXIT_FAILURE);
+	    }
 	    break;
+	}
 	case 'k':
 	    graphType = complete;
 	    if (setOne(optarg, opts))
@@ -361,7 +333,7 @@ static GraphType init(int argc, char *argv[], opts_t* opts)
 	    opts->name = optarg;
 	    break;
 	case 'o':
-	    opts->outfile = openFile(optarg, "w");
+	    opts->outfile = openFile(cmd, optarg, "w");
 	    break;
 	case 'p':
 	    graphType = path;
@@ -373,7 +345,8 @@ static GraphType init(int argc, char *argv[], opts_t* opts)
 	    if (setTwoOpt(optarg, opts, 2))
 		errexit(c);
 	    if (opts->graphSize2 > 3) {
-		fprintf(stderr, "%dD Sierpinski not implemented - use 2 or 3 ", opts->graphSize2);
+		fprintf(stderr, "%uD Sierpinski not implemented - use 2 or 3 ",
+		        opts->graphSize2);
 		errexit(c);
 	    }
 	    break;
@@ -382,18 +355,30 @@ static GraphType init(int argc, char *argv[], opts_t* opts)
 	    if (setOne(optarg, opts))
 		errexit(c);
 	    break;
-	case 't':
+	case 't': {
 	    graphType = tree;
 	    if (setTwoOpt(optarg, opts, 2))
 		errexit(c);
+	    // detect if `1u << opts->graphSize1` in `makeBinaryTree` will overflow
+	    const size_t max_shift = sizeof(unsigned) * CHAR_BIT - 1;
+	    if (opts->graphSize1 > max_shift && opts->graphSize2 == 2) {
+		fprintf(stderr, "depth of a binary tree must be < %" PRISIZE_T "\n",
+		        max_shift);
+		graphviz_exit(EXIT_FAILURE);
+	    }
 	    break;
+	}
 	case 'T':
 	    graphType = torus;
 	    if (setTwoTwoOpt(optarg, opts, 0))
 		errexit(c);
 	    break;
 	case 'i':
-	    if (readOne(optarg,&(opts->cnt)))
+	    if (readOne(optarg, &opts->cnt))
+		errexit(c);
+	    break;
+	case 'u':
+	    if (readOne(optarg, &opts->seed))
 		errexit(c);
 	    break;
 	case 'v':
@@ -411,11 +396,12 @@ static GraphType init(int argc, char *argv[], opts_t* opts)
 		fprintf(stderr, "Unrecognized flag \"-%c\" - ignored\n",
 			optopt);
 	    break;
+	default:
+	    fprintf(stderr, "Unexpected error\n");
+	    usage(EXIT_FAILURE);
 	}
     }
 
-    argc -= optind;
-    argv += optind;
     if (!opts->outfile)
 	opts->outfile = stdout;
     if (graphType == unknown) {
@@ -428,20 +414,18 @@ static GraphType init(int argc, char *argv[], opts_t* opts)
 
 static opts_t opts;
 
-static void dirfn (int t, int h)
-{
+static void dirfn(unsigned t, unsigned h) {
     if (h > 0)
-	fprintf (opts.outfile, "  %s%d -> %s%d\n", opts.pfx, t, opts.pfx, h);
+	fprintf(opts.outfile, "  %s%u -> %s%u\n", opts.pfx, t, opts.pfx, h);
     else
-	fprintf (opts.outfile, "  %s%d\n", opts.pfx, t);
+	fprintf(opts.outfile, "  %s%u\n", opts.pfx, t);
 }
 
-static void undirfn (int t, int h)
-{
+static void undirfn(unsigned t, unsigned h) {
     if (h > 0)
-	fprintf (opts.outfile, "  %s%d -- %s%d\n", opts.pfx, t, opts.pfx, h);
+	fprintf(opts.outfile, "  %s%u -- %s%u\n", opts.pfx, t, opts.pfx, h);
     else
-	fprintf (opts.outfile, "  %s%d\n", opts.pfx, t);
+	fprintf(opts.outfile, "  %s%u\n", opts.pfx, t);
 }
 
 static void
@@ -461,6 +445,7 @@ int main(int argc, char *argv[])
     opts.pfx = "";
     opts.name = "";
     opts.cnt = 1;
+    opts.seed = (unsigned)time(0);
     graphType = init(argc, argv, &opts);
     if (opts.directed) {
 	fprintf(opts.outfile, "digraph %s{\n", opts.name);
@@ -470,6 +455,9 @@ int main(int argc, char *argv[])
 	fprintf(opts.outfile, "graph %s{\n", opts.name);
 	ef = undirfn;
     }
+
+    // seed the random number generator
+    srand(opts.seed);
 
     switch (graphType) {
     case grid:
@@ -495,7 +483,7 @@ int main(int argc, char *argv[])
 	makeBall(opts.graphSize1, opts.graphSize2, ef);
 	break;
     case torus:
-	if ((opts.parm1 == 0) && (opts.parm2 == 0))
+	if (opts.parm1 == 0 && opts.parm2 == 0)
 	    makeTorus(opts.graphSize1, opts.graphSize2, ef);
 	else
 	    makeTwistedTorus(opts.graphSize1, opts.graphSize2, opts.parm1, opts.parm2, ef);
@@ -520,9 +508,8 @@ int main(int argc, char *argv[])
 	break;
     case randomt:
 	{
-	    int i;
 	    treegen_t* tg = makeTreeGen (opts.graphSize1);
-	    for (i = 1; i <= opts.cnt; i++) {
+	    for (unsigned i = 1; i <= opts.cnt; i++) {
 		makeRandomTree (tg, ef);
 		if (i != opts.cnt) closeOpen ();
 	    }
@@ -548,5 +535,5 @@ int main(int argc, char *argv[])
     }
     fprintf(opts.outfile, "}\n");
 
-    exit(0);
+    graphviz_exit(0);
 }

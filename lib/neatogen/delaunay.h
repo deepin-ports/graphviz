@@ -1,20 +1,17 @@
-/* $Id$ $Revision$ */
-/* vim:set shiftwidth=4 ts=8: */
-
 /*************************************************************************
  * Copyright (c) 2011 AT&T Intellectual Property 
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
- * http://www.eclipse.org/legal/epl-v10.html
+ * https://www.eclipse.org/legal/epl-v10.html
  *
- * Contributors: See CVS logs. Details at http://www.graphviz.org/
+ * Contributors: Details at https://graphviz.org
  *************************************************************************/
 
-#ifndef DELAUNAY_H
-#define DELAUNAY_H
+#pragma once
 
-#include "sparsegraph.h"
+#include <neatogen/sparsegraph.h>
+#include <util/api.h>
 
 typedef struct {
     int  nedges; /* no. of edges in triangulation */
@@ -24,16 +21,12 @@ typedef struct {
     int* neigh;  /* 3*nfaces indices of neighbor triangles */ 
 } surface_t;
 
-v_data *delaunay_triangulation(double *x, double *y, int n);
+PRIVATE int *delaunay_tri (double *x, double *y, int n, int* nedges);
 
-int *delaunay_tri (double *x, double *y, int n, int* nedges);
+PRIVATE int *get_triangles (double *x, int n, int* ntris);
 
-int *get_triangles (double *x, int n, int* ntris);
+PRIVATE v_data *UG_graph(double *x, double *y, int n);
 
-v_data *UG_graph(double *x, double *y, int n, int accurate_computation);
+PRIVATE surface_t* mkSurface (double *x, double *y, int n, int* segs, int nsegs);
 
-surface_t* mkSurface (double *x, double *y, int n, int* segs, int nsegs);
-
-void freeSurface (surface_t* s);
-
-#endif
+PRIVATE void freeSurface (surface_t* s);

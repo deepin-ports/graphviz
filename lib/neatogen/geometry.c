@@ -1,43 +1,36 @@
-/* $Id$ $Revision$ */
-/* vim:set shiftwidth=4 ts=8: */
-
 /*************************************************************************
  * Copyright (c) 2011 AT&T Intellectual Property 
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
- * http://www.eclipse.org/legal/epl-v10.html
+ * https://www.eclipse.org/legal/epl-v10.html
  *
- * Contributors: See CVS logs. Details at http://www.graphviz.org/
+ * Contributors: Details at https://graphviz.org
  *************************************************************************/
 
-#include "geometry.h"
+#include "config.h"
+
+#include <neatogen/geometry.h>
 #include <math.h>
-
-
-Point origin = { 0, 0 };
+#include <stddef.h>
 
 double xmin, xmax, ymin, ymax;	/* min and max x and y values of sites */
-double deltax,			/* xmax - xmin */
- deltay;			/* ymax - ymin */
+double deltax; // xmax - xmin
 
-int nsites;
+size_t nsites;
 int sqrt_nsites;
 
-void geominit()
+void geominit(void)
 {
     double sn;
 
     sn = nsites + 4;
     sqrt_nsites = (int) sqrt(sn);
-    /* deltay = ymax - ymin; */
-    /* deltax = xmax - xmin; */
 }
 
-double dist_2(Point * pp, Point * qp)
-{
-    double dx = pp->x - qp->x;
-    double dy = pp->y - qp->y;
+double dist_2(Point pp, Point qp) {
+    const double dx = pp.x - qp.x;
+    const double dy = pp.y - qp.y;
 
     return (dx * dx + dy * dy);
 }

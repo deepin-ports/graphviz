@@ -1,3 +1,2 @@
 # unused and not installed
-graphviz source: source-is-missing [doc/info/schema.html]
-graphviz source: source-is-missing [lib/rbtree/test_rb]
+graphviz source: source-is-missing lib/rbtree/test_rb

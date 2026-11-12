@@ -1,52 +1,41 @@
-/* vim:set shiftwidth=4 ts=8: */
-
 /*************************************************************************
  * Copyright (c) 2011 AT&T Intellectual Property
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
- * http://www.eclipse.org/legal/epl-v10.html
+ * https://www.eclipse.org/legal/epl-v10.html
  *
- * Contributors: See CVS logs. Details at http://www.graphviz.org/
+ * Contributors: Details at https://graphviz.org
  *************************************************************************/
 
-#include <stdlib.h>
+#include "config.h"
 
-#include "index.h"
+#include <stdlib.h>
+#include <inttypes.h>
+#include <label/index.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <assert.h>
-#include "node.h"
+#include <label/node.h>
+#include <util/alloc.h>
 
 /* Make a new node and initialize to have all branch cells empty.
 */
-Node_t *RTreeNewNode(RTree_t * rtp)
-{
-    register Node_t *n;
-
-    rtp->NodeCount++;
-    n = (Node_t *) malloc(sizeof(Node_t));
+Node_t *RTreeNewNode(void) {
+    Node_t *n = gv_alloc(sizeof(Node_t));
     InitNode(n);
     return n;
-}
-
-void RTreeFreeNode(RTree_t * rtp, Node_t * p)
-{
-    rtp->NodeCount--;
-    if (p->level == 0)
-	rtp->LeafCount--;
-    else
-	rtp->NonLeafCount--;
-    free(p);
 }
 
 /* Initialize a Node structure.
 */
 void InitNode(Node_t * n)
 {
-    register int i;
     n->count = 0;
     n->level = -1;
-    for (i = 0; i < NODECARD; i++)
+    for (size_t i = 0; i < NODECARD; i++)
 	InitBranch(&(n->branch[i]));
 }
 
@@ -63,7 +52,6 @@ void InitBranch(Branch_t * b)
 */
 void PrintNode(Node_t * n)
 {
-    int i;
     assert(n);
 
     fprintf(stderr, "node");
@@ -73,10 +61,10 @@ void PrintNode(Node_t * n)
 	fprintf(stderr, " NONLEAF");
     else
 	fprintf(stderr, " TYPE=?");
-    fprintf(stderr, "  level=%d  count=%d  child address=%X\n",
-	    n->level, n->count, (unsigned int) n);
+    fprintf(stderr, "  level=%d  count=%d  child address=%p\n",
+	    n->level, n->count, n);
 
-    for (i = 0; i < NODECARD; i++) {
+    for (size_t i = 0; i < NODECARD; i++) {
 	if (n->branch[i].child != NULL)
 	    PrintBranch(i, &n->branch[i]);
     }
@@ -85,7 +73,7 @@ void PrintNode(Node_t * n)
 void PrintBranch(int i, Branch_t * b)
 {
     fprintf(stderr, "  child[%d] X%X\n", i, (unsigned int) b->child);
-    PrintRect(&(b->rect));
+    PrintRect(b->rect);
 }
 #endif
 
@@ -94,19 +82,18 @@ void PrintBranch(int i, Branch_t * b)
 */
 Rect_t NodeCover(Node_t * n)
 {
-    register int i, flag;
     Rect_t r;
     assert(n);
 
     InitRect(&r);
-    flag = 1;
-    for (i = 0; i < NODECARD; i++)
+    bool flag = true;
+    for (size_t i = 0; i < NODECARD; i++)
 	if (n->branch[i].child) {
 	    if (flag) {
 		r = n->branch[i].rect;
-		flag = 0;
+		flag = false;
 	    } else
-		r = CombineRect(&r, &(n->branch[i].rect));
+		r = CombineRect(r, n->branch[i].rect);
 	}
     return r;
 }
@@ -117,26 +104,24 @@ Rect_t NodeCover(Node_t * n)
 ** In case of a tie, pick the one which was smaller before, to get
 ** the best resolution when searching.
 */
-int PickBranch(Rect_t * r, Node_t * n)
-{
-    register Rect_t *rr=0;
-    register int i=0, flag=1, increase=0, bestIncr=0, area=0, bestArea=0;
+int PickBranch(Rect_t r, Node_t *n) {
+    uint64_t bestIncr = 0;
+    uint64_t bestArea = 0;
     int best=0;
-    assert(r && n);
+    bool bestSet = false;
+    assert(n);
 
-    for (i = 0; i < NODECARD; i++) {
+    for (int i = 0; i < NODECARD; i++) {
 	if (n->branch[i].child) {
-	    Rect_t rect;
-	    rr = &n->branch[i].rect;
-	    area = RectArea(rr);
-	    /* increase = RectArea(&CombineRect(r, rr)) - area; */
-	    rect = CombineRect(r, rr);
-	    increase = RectArea(&rect) - area;
-	    if (increase < bestIncr || flag) {
+	    const Rect_t rr = n->branch[i].rect;
+	    uint64_t area = RectArea(rr);
+	    Rect_t rect = CombineRect(r, rr);
+	    uint64_t increase = RectArea(rect) - area;
+	    if (!bestSet || increase < bestIncr) {
 		best = i;
 		bestArea = area;
 		bestIncr = increase;
-		flag = 0;
+		bestSet = true;
 	    } else if (increase == bestIncr && area < bestArea) {
 		best = i;
 		bestArea = area;
@@ -144,8 +129,8 @@ int PickBranch(Rect_t * r, Node_t * n)
 	    }
 #			ifdef RTDEBUG
 	    fprintf(stderr,
-		    "i=%d  area before=%d  area after=%d  increase=%d\n",
-		    i, area, area + increase, increase);
+		    "i=%d  area before=%" PRIu64 "  area after=%" PRIu64 "  increase=%" PRIu64
+		    "\n", i, area, area + increase, increase);
 #			endif
 	}
     }
@@ -162,12 +147,11 @@ int PickBranch(Rect_t * r, Node_t * n)
 */
 int AddBranch(RTree_t * rtp, Branch_t * b, Node_t * n, Node_t ** new)
 {
-    register int i;
-
     assert(b);
     assert(n);
 
     if (n->count < NODECARD) {	/* split won't be necessary */
+	size_t i;
 	for (i = 0; i < NODECARD; i++) {	/* find empty branch */
 	    if (n->branch[i].child == NULL) {
 		n->branch[i] = *b;
@@ -178,18 +162,8 @@ int AddBranch(RTree_t * rtp, Branch_t * b, Node_t * n, Node_t ** new)
 	assert(i < NODECARD);
 	return 0;
     } else {
-	if (rtp->StatFlag) {
-	    if (rtp->Deleting)
-		rtp->DeTouchCount++;
-	    else
-		rtp->InTouchCount++;
-	}
 	assert(new);
 	SplitNode(rtp, n, b, new);
-	if (n->level == 0)
-	    rtp->LeafCount++;
-	else
-	    rtp->NonLeafCount++;
 	return 1;
     }
 }

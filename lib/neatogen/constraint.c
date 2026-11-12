@@ -1,21 +1,24 @@
-/* $Id$ $Revision$ */
-/* vim:set shiftwidth=4 ts=8: */
-
 /*************************************************************************
  * Copyright (c) 2011 AT&T Intellectual Property 
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
- * http://www.eclipse.org/legal/epl-v10.html
+ * https://www.eclipse.org/legal/epl-v10.html
  *
- * Contributors: See CVS logs. Details at http://www.graphviz.org/
+ * Contributors: Details at https://graphviz.org
  *************************************************************************/
 
 
 #include "config.h"
-
-#include "neato.h"
-#include "adjust.h"
+#include <common/geom.h>
+#include <math.h>
+#include <neatogen/neato.h>
+#include <neatogen/adjust.h>
+#include <stddef.h>
+#include <stdbool.h>
+#include <util/alloc.h>
+#include <util/itos.h>
+#include <util/list.h>
 
 /* For precision, scale up before algorithms, then scale down */
 #define SCALE 10   
@@ -34,24 +37,25 @@ typedef struct nitem {
 typedef int (*distfn) (box *, box *);
 typedef int (*intersectfn) (nitem *, nitem *);
 
-static int cmpitem(Dt_t * d, int *p1, int *p2, Dtdisc_t * disc)
-{
-    NOTUSED(d);
-    NOTUSED(disc);
-
-    return (*p1 - *p2);
+static int cmpitem(void *item1, void *item2) {
+    const int *p1 = item1;
+    const int *p2 = item2;
+    if (*p1 < *p2) {
+        return -1;
+    }
+    if (*p1 > *p2) {
+        return 1;
+    }
+    return 0;
 }
 
 static Dtdisc_t constr = {
     offsetof(nitem, val),
     sizeof(int),
     offsetof(nitem, link),
-    NIL(Dtmake_f),
-    NIL(Dtfree_f),
-    (Dtcompar_f) cmpitem,
-    NIL(Dthash_f),
-    NIL(Dtmemory_f),
-    NIL(Dtevent_f)
+    NULL,
+    NULL,
+    cmpitem,
 };
 
 static int distY(box * b1, box * b2)
@@ -64,8 +68,7 @@ static int distX(box * b1, box * b2)
     return ((b1->UR.x - b1->LL.x) + (b2->UR.x - b2->LL.x)) / 2;
 }
 
-/* intersectX0:
- * Return true if boxes could overlap if shifted in y but don't,
+/* Return true if boxes could overlap if shifted in y but don't,
  * or if actually overlap and an y move is smallest to remove overlap.
  * Otherwise (no x overlap or a x move is smaller), return false.
  * Assume q pos to above of p pos.
@@ -73,7 +76,7 @@ static int distX(box * b1, box * b2)
 static int intersectX0(nitem * p, nitem * q)
 {
     int xdelta, ydelta;
-    int v = ((p->bb.LL.x <= q->bb.UR.x) && (q->bb.LL.x <= p->bb.UR.x));
+    int v = p->bb.LL.x <= q->bb.UR.x && q->bb.LL.x <= p->bb.UR.x;
     if (v == 0)  /* no x overlap */
 	return 0;
     if (p->bb.UR.y < q->bb.LL.y) /* but boxes don't really overlap */
@@ -83,11 +86,10 @@ static int intersectX0(nitem * p, nitem * q)
 	xdelta = distX(&p->bb,&q->bb) - (q->pos.x - p->pos.x); 
     else
 	xdelta = distX(&p->bb,&q->bb) - (p->pos.x - q->pos.x); 
-    return (ydelta <= xdelta);
+    return ydelta <= xdelta;
 }
 
-/* intersectY0:
- * Return true if boxes could overlap if shifted in x but don't,
+/* Return true if boxes could overlap if shifted in x but don't,
  * or if actually overlap and an x move is smallest to remove overlap.
  * Otherwise (no y overlap or a y move is smaller), return false.
  * Assume q pos to right of p pos.
@@ -95,7 +97,7 @@ static int intersectX0(nitem * p, nitem * q)
 static int intersectY0(nitem * p, nitem * q)
 {
     int xdelta, ydelta;
-    int v = ((p->bb.LL.y <= q->bb.UR.y) && (q->bb.LL.y <= p->bb.UR.y));
+    int v = p->bb.LL.y <= q->bb.UR.y && q->bb.LL.y <= p->bb.UR.y;
     if (v == 0)  /* no y overlap */
 	return 0;
     if (p->bb.UR.x < q->bb.LL.x) /* but boxes don't really overlap */
@@ -105,21 +107,19 @@ static int intersectY0(nitem * p, nitem * q)
 	ydelta = distY(&p->bb,&q->bb) - (q->pos.y - p->pos.y); 
     else
 	ydelta = distY(&p->bb,&q->bb) - (p->pos.y - q->pos.y); 
-    return (xdelta <= ydelta);
+    return xdelta <= ydelta;
 }
 
 static int intersectY(nitem * p, nitem * q)
 {
-    return ((p->bb.LL.y <= q->bb.UR.y) && (q->bb.LL.y <= p->bb.UR.y));
+  return p->bb.LL.y <= q->bb.UR.y && q->bb.LL.y <= p->bb.UR.y;
 }
 
 static int intersectX(nitem * p, nitem * q)
 {
-    return ((p->bb.LL.x <= q->bb.UR.x) && (q->bb.LL.x <= p->bb.UR.x));
+  return p->bb.LL.x <= q->bb.UR.x && q->bb.LL.x <= p->bb.UR.x;
 }
 
-/* mapGraphs:
- */
 static void mapGraphs(graph_t * g, graph_t * cg, distfn dist)
 {
     node_t *n;
@@ -132,14 +132,14 @@ static void mapGraphs(graph_t * g, graph_t * cg, distfn dist)
     int delta;
 
     for (n = agfstnode(g); n; n = agnxtnode(g, n)) {
-	tp = (nitem *) ND_alg(n);
+	tp = ND_alg(n);
 	t = tp->cnode;
 	for (e = agfstout(g, n); e; e = agnxtout(g, e)) {
-	    hp = (nitem *) ND_alg(aghead(e));
+	    hp = ND_alg(aghead(e));
 	    delta = dist(&tp->bb, &hp->bb);
 	    h = hp->cnode;
 	    ce = agedge(cg, t, h, NULL, 1);
-	    agbindrec(ce, "Agedgeinfo_t", sizeof(Agedgeinfo_t), TRUE);
+	    agbindrec(ce, "Agedgeinfo_t", sizeof(Agedgeinfo_t), true);
 	    ED_weight(ce) = 1;
 	    if (ED_minlen(ce) < delta) {
 		if (ED_minlen(ce) == 0.0) {
@@ -152,7 +152,7 @@ static void mapGraphs(graph_t * g, graph_t * cg, distfn dist)
     }
 }
 
-#if DEBUG > 1
+#if defined(DEBUG) && DEBUG > 1
 static int
 indegree (graph_t * g, node_t *n)
 {
@@ -197,19 +197,8 @@ validate(graph_t * g)
 }
 #endif
 
-#ifdef OLD
-static node_t *newNode(graph_t * g)
-{
-    static int id = 0;
-    char buf[100];
 
-    sprintf(buf, "n%d", id++);
-    return agnode(g, buf);
-}
-#endif
-
-/* mkNConstraintG:
- * Similar to mkConstraintG, except it doesn't enforce orthogonal
+/* Similar to mkConstraintG, except it doesn't enforce orthogonal
  * ordering. If there is overlap, as defined by intersect, the
  * nodes will kept/pushed apart in the current order. If not, no
  * constraint is enforced. If a constraint edge is added, and it
@@ -224,13 +213,12 @@ static graph_t *mkNConstraintG(graph_t * g, Dt_t * list,
     node_t *n;
     edge_t *e;
     node_t *lastn = NULL;
-    graph_t *cg = agopen("cg", Agstrictdirected, NIL(Agdisc_t *));
-    agbindrec(cg, "Agraphinfo_t", sizeof(Agraphinfo_t), TRUE);  // graph custom data
+    graph_t *cg = agopen("cg", Agstrictdirected, NULL);
+    agbindrec(cg, "Agraphinfo_t", sizeof(Agraphinfo_t), true);  // graph custom data
 
-    for (p = (nitem *) dtflatten(list); p;
-	 p = (nitem *) dtlink(list, (Dtlink_t *) p)) {
+    for (p = (nitem *)dtflatten(list); p; p = (nitem *)dtlink(list, p)) {
 	n = agnode(cg, agnameof(p->np), 1);      /* FIX */
-	agbindrec(n, "Agnodeinfo_t", sizeof(Agnodeinfo_t), TRUE); //node custom data
+	agbindrec(n, "Agnodeinfo_t", sizeof(Agnodeinfo_t), true); //node custom data
 	ND_alg(n) = p;
 	p->cnode = n;
 	alloc_elist(0, ND_in(n));
@@ -242,15 +230,13 @@ static graph_t *mkNConstraintG(graph_t * g, Dt_t * list,
 	    lastn = GD_nlist(cg) = n;
 	}
     }
-    for (p = (nitem *) dtflatten(list); p;
-	 p = (nitem *) dtlink(list, (Dtlink_t *) p)) {
-	for (nxp = (nitem *) dtlink(link, (Dtlink_t *) p); nxp;
-	     nxp = (nitem *) dtlink(list, (Dtlink_t *) nxp)) {
+    for (p = (nitem *)dtflatten(list); p; p = (nitem *)dtlink(list, p)) {
+	for (nxp = (nitem *)dtlink(link, p); nxp; nxp = (nitem *)dtlink(list, nxp)) {
 	    e = NULL;
 	    if (intersect(p, nxp)) {
 	        double delta = dist(&p->bb, &nxp->bb);
 	        e = agedge(cg, p->cnode, nxp->cnode, NULL, 1);
-		agbindrec(e, "Agedgeinfo_t", sizeof(Agedgeinfo_t), TRUE);   // edge custom data
+		agbindrec(e, "Agedgeinfo_t", sizeof(Agedgeinfo_t), true);   // edge custom data
 		assert (delta <= 0xFFFF);
 		ED_minlen(e) = delta;
 		ED_weight(e) = 1;
@@ -258,24 +244,10 @@ static graph_t *mkNConstraintG(graph_t * g, Dt_t * list,
 	    if (e && agfindedge(g,p->np, nxp->np)) {
 		ED_weight(e) = 100;
             }
-#if 0
-	    if (agfindedge(g,p->np, nxp->np)) {
-		if (e == NULL)
-	            e = agedge(cg, p->cnode, nxp->cnode);
-		ED_weight(e) = 100;
-                /* If minlen < SCALE, the nodes can't conflict or there's
-                 * an overlap but it will be removed in the orthogonal pass.
-                 * So we just keep the node's basically where they are.
-                 */
-		if (SCALE > ED_minlen(e))
-		    ED_minlen(e) = SCALE;
-	    }
-#endif
 	}
     }
    
-    for (p = (nitem *) dtflatten(list); p;
-	 p = (nitem *) dtlink(list, (Dtlink_t *) p)) {
+    for (p = (nitem *)dtflatten(list); p; p = (nitem *)dtlink(list, p)) {
 	n = p->cnode;
 	for (e = agfstout(cg,n); e; e = agnxtout(cg,e)) {
 	    elist_append(e, ND_out(n));
@@ -290,11 +262,8 @@ static graph_t *mkNConstraintG(graph_t * g, Dt_t * list,
      */
     return cg;
 }
-/* mkConstraintG:
- */
-static graph_t *mkConstraintG(graph_t * g, Dt_t * list,
-			      intersectfn intersect, distfn dist)
-{
+
+static graph_t *mkConstraintG(Dt_t * list, intersectfn intersect, distfn dist) {
     nitem *p;
     nitem *nxt = NULL;
     nitem *nxp;
@@ -305,17 +274,13 @@ static graph_t *mkConstraintG(graph_t * g, Dt_t * list,
     edge_t *e;
     int lcnt, cnt;
     int oldval = -INT_MAX;
-#ifdef OLD
-    double root_val;
-#endif
     node_t *lastn = NULL;
-    graph_t *cg = agopen("cg", Agstrictdirected, NIL(Agdisc_t *));
-    agbindrec(cg, "Agraphinfo_t", sizeof(Agraphinfo_t), TRUE);  // graph custom data
+    graph_t *cg = agopen("cg", Agstrictdirected, NULL);
+    agbindrec(cg, "Agraphinfo_t", sizeof(Agraphinfo_t), true);  // graph custom data
 
     /* count distinct nodes */
     cnt = 0;
-    for (p = (nitem *) dtflatten(list); p;
-	 p = (nitem *) dtlink(list, (Dtlink_t *) p)) {
+    for (p = (nitem *)dtflatten(list); p; p = (nitem *)dtlink(list, p)) {
 	if (oldval != p->val) {
 	    oldval = p->val;
 	    cnt++;
@@ -325,22 +290,18 @@ static graph_t *mkConstraintG(graph_t * g, Dt_t * list,
     /* construct basic chain to enforce left to right order */
     oldval = -INT_MAX;
     lcnt = 0;
-    for (p = (nitem *) dtflatten(list); p;
-	 p = (nitem *) dtlink(list, (Dtlink_t *) p)) {
+    for (p = (nitem *)dtflatten(list); p; p = (nitem *)dtlink(list, p)) {
 	if (oldval != p->val) {
 	    oldval = p->val;
 	    /* n = newNode (cg); */
 	    n = agnode(cg, agnameof(p->np), 1);	/* FIX */
-	    agbindrec(n, "Agnodeinfo_t", sizeof(Agnodeinfo_t), TRUE); //node custom data
+	    agbindrec(n, "Agnodeinfo_t", sizeof(Agnodeinfo_t), true); //node custom data
 	    ND_alg(n) = p;
 	    if (root) {
 		ND_next(lastn) = n;
 		lastn = n;
 	    } else {
 		root = n;
-#ifdef OLD
-		root_val = p->val;
-#endif
 		lastn = GD_nlist(cg) = n;
 	    }
 	    alloc_elist(lcnt, ND_in(n));
@@ -350,7 +311,7 @@ static graph_t *mkConstraintG(graph_t * g, Dt_t * list,
 		else
 		    alloc_elist(cnt - lcnt - 1, ND_out(prev));
 		e = agedge(cg, prev, n, NULL, 1);
-		agbindrec(e, "Agedgeinfo_t", sizeof(Agedgeinfo_t), TRUE);   // edge custom data
+		agbindrec(e, "Agedgeinfo_t", sizeof(Agedgeinfo_t), true);   // edge custom data
 		ED_minlen(e) = SCALE;
 		ED_weight(e) = 1;
 		elist_append(e, ND_out(prev));
@@ -368,29 +329,26 @@ static graph_t *mkConstraintG(graph_t * g, Dt_t * list,
      * Remaining outedges are immediate right neighbors.
      * FIX: Incremental algorithm to construct trans. reduction?
      */
-    vg = agopen("vg", Agstrictdirected, NIL(Agdisc_t *));
-    for (p = (nitem *) dtflatten(list); p;
-	 p = (nitem *) dtlink(list, (Dtlink_t *) p)) {
+    vg = agopen("vg", Agstrictdirected, NULL);
+    for (p = (nitem *)dtflatten(list); p; p = (nitem *)dtlink(list, p)) {
 	n = agnode(vg, agnameof(p->np), 1);  /* FIX */
-	agbindrec(n, "Agnodeinfo_t", sizeof(Agnodeinfo_t), TRUE);  //node custom data
+	agbindrec(n, "Agnodeinfo_t", sizeof(Agnodeinfo_t), true);  //node custom data
 	p->vnode = n;
 	ND_alg(n) = p;
     }
     oldval = -INT_MAX;
-    for (p = (nitem *) dtflatten(list); p;
-	 p = (nitem *) dtlink(list, (Dtlink_t *) p)) {
+    for (p = (nitem *)dtflatten(list); p; p = (nitem *)dtlink(list, p)) {
 	if (oldval != p->val) {	/* new pos: reset nxt */
 	    oldval = p->val;
-	    for (nxt = (nitem *) dtlink(link, (Dtlink_t *) p); nxt;
-		 nxt = (nitem *) dtlink(list, (Dtlink_t *) nxt)) {
+	    for (nxt = (nitem *)dtlink(link, p); nxt;
+		 nxt = (nitem *)dtlink(list, nxt)) {
 		if (nxt->val != oldval)
 		    break;
 	    }
 	    if (!nxt)
 		break;
 	}
-	for (nxp = nxt; nxp;
-	     nxp = (nitem *) dtlink(list, (Dtlink_t *) nxp)) {
+	for (nxp = nxt; nxp; nxp = (nitem *)dtlink(list, nxp)) {
 	    if (intersect(p, nxp))
 		agedge(vg, p->vnode, nxp->vnode, NULL, 1);
 	}
@@ -403,56 +361,19 @@ static graph_t *mkConstraintG(graph_t * g, Dt_t * list,
     mapGraphs(vg, cg, dist);
     agclose(vg);
 
-    /* add dummy constraints for absolute values and initial positions */
-#ifdef OLD
-    for (n = agfstnode(cg); n; n = agnxtnode(cg, n)) {
-	node_t *vn;		/* slack node for absolute value */
-	node_t *an;		/* node representing original position */
-
-	p = (nitem *) ND_alg(n);
-	if ((n == root) || (!p))
-	    continue;
-	vn = newNode(cg);
-	ND_next(lastn) = vn;
-	lastn = vn;
-	alloc_elist(0, ND_out(vn));
-	alloc_elist(2, ND_in(vn));
-	an = newNode(cg);
-	ND_next(lastn) = an;
-	lastn = an;
-	alloc_elist(1, ND_in(an));
-	alloc_elist(1, ND_out(an));
-
-	e = agedge(cg, root, an, 1);
-	ED_minlen(e) = p->val - root_val;
-	elist_append(e, ND_out(root));
-	elist_append(e, ND_in(an));
-
-	e = agedge(cg, an, vn, 1);
-	elist_append(e, ND_out(an));
-	elist_append(e, ND_in(vn));
-
-	e = agedge(cg, n, vn, 1);
-	elist_append(e, ND_out(n));
-	elist_append(e, ND_in(vn));
-    }
-#endif  /* OLD */
-
     return cg;
 }
 
 static void closeGraph(graph_t * cg)
 {
-    node_t *n;
-    for (n = agfstnode(cg); n; n = agnxtnode(cg, n)) {
+    for (node_t *n = agfstnode(cg); n; n = agnxtnode(cg, n)) {
 	free_list(ND_in(n));
 	free_list(ND_out(n));
     }
     agclose(cg);
 }
 
-/* constrainX:
- * Create the X constrains and solve. We use a linear objective function
+/* Create the X constrains and solve. We use a linear objective function
  * (absolute values rather than squares), so we can reuse network simplex.
  * The constraints are encoded as a dag with edges having a minimum length.
  */
@@ -470,7 +391,7 @@ static void constrainX(graph_t* g, nitem* nlist, int nnodes, intersectfn ifn,
 	p++;
     }
     if (ortho)
-	cg = mkConstraintG(g, list, ifn, distX);
+	cg = mkConstraintG(list, ifn, distX);
     else
 	cg = mkNConstraintG(g, list, ifn, distX);
     rank(cg, 2, INT_MAX);
@@ -491,9 +412,7 @@ static void constrainX(graph_t* g, nitem* nlist, int nnodes, intersectfn ifn,
     dtclose(list);
 }
 
-/* constrainY:
- * See constrainX.
- */
+/// see constrainX
 static void constrainY(graph_t* g, nitem* nlist, int nnodes, intersectfn ifn,
                        int ortho)
 {
@@ -508,23 +427,20 @@ static void constrainY(graph_t* g, nitem* nlist, int nnodes, intersectfn ifn,
 	p++;
     }
     if (ortho)
-	cg = mkConstraintG(g, list, ifn, distY);
+	cg = mkConstraintG(list, ifn, distY);
     else
 	cg = mkNConstraintG(g, list, ifn, distY);
     rank(cg, 2, INT_MAX);
 #ifdef DEBUG
     {
-	Agsym_t *mlsym = agattr(cg, AGEDGE, "minlen", "");
-	Agsym_t *rksym = agattr(cg, AGNODE, "rank", "");
-	char buf[100];
+	Agsym_t *mlsym = agattr_text(cg, AGEDGE, "minlen", "");
+	Agsym_t *rksym = agattr_text(cg, AGNODE, "rank", "");
 	node_t *n;
 	edge_t *e;
 	for (n = agfstnode(cg); n; n = agnxtnode(cg, n)) {
-	    sprintf(buf, "%d", ND_rank(n));
-	    agxset(n, rksym, buf);
+	    agxset(n, rksym, ITOS(ND_rank(n)));
 	    for (e = agfstedge(cg, n); e; e = agnxtedge(cg, e, n)) {
-		sprintf(buf, "%d", ED_minlen(e));
-		agxset(e, mlsym, buf);
+		agxset(e, mlsym, ITOS(ED_minlen(e)));
 	    }
 	}
     }
@@ -546,12 +462,6 @@ static void constrainY(graph_t* g, nitem* nlist, int nnodes, intersectfn ifn,
     dtclose(list);
 }
 
-#define overlap(pb,qb) \
-  ((pb.LL.x <= qb.UR.x) && (qb.LL.x <= pb.UR.x) && \
-          (pb.LL.y <= qb.UR.y) && (qb.LL.y <= pb.UR.y))
-
-/* overlaps:
- */
 static int overlaps(nitem * p, int cnt)
 {
     int i, j;
@@ -561,7 +471,7 @@ static int overlaps(nitem * p, int cnt)
     for (i = 0; i < cnt - 1; i++) {
 	pj = pi + 1;
 	for (j = i + 1; j < cnt; j++) {
-	    if (overlap(pi->bb, pj->bb))
+	    if (OVERLAP(pi->bb, pj->bb))
 		return 1;
 	    pj++;
 	}
@@ -570,8 +480,6 @@ static int overlaps(nitem * p, int cnt)
     return 0;
 }
 
-/* initItem:
- */
 static void initItem(node_t * n, nitem * p, expand_t margin)
 {
     int x = POINTS(SCALE * ND_pos(n)[0]);
@@ -599,8 +507,7 @@ static void initItem(node_t * n, nitem * p, expand_t margin)
     p->bb = b;
 }
 
-/* cAdjust:
- * Use optimization to remove overlaps.
+/* Use optimization to remove overlaps.
  * Modifications;
  *  - do y;x then x;y and use the better one
  *  - for all overlaps (or if overlap with leftmost nodes), add a constraint;
@@ -614,7 +521,8 @@ static void initItem(node_t * n, nitem * p, expand_t margin)
  * we require relative positions to remain the same. That is, if two nodes
  * have the same x originally, they have the same x at the end, and if one
  * node is to the left of another, it remains to the left. In addition, if
- * two nodes could overlap by moving their X coordinates, we insert a constraint * to keep the two nodes sufficiently apart. Similarly, for Y.
+ * two nodes could overlap by moving their X coordinates, we insert a constraint
+ * to keep the two nodes sufficiently apart. Similarly, for Y.
  * 
  * mode = AM_ORTHOXY => first X, then Y
  * mode = AM_ORTHOYX => first Y, then X
@@ -626,17 +534,12 @@ static void initItem(node_t * n, nitem * p, expand_t margin)
  * but leave it for the Y pass to remove any remaining overlaps. Without this,
  * the X pass will remove all overlaps, and the Y pass only compresses in the
  * Y direction, causing a skewing of the aspect ratio.
- * 
- * mode = AM_ORTHOXY => first X, then Y
- * mode = AM_ORTHOYX => first Y, then X
- * mode = AM_ORTHO   => first X, then Y
- * mode = AM_ORTHO_YX   => first Y, then X
  */
 int cAdjust(graph_t * g, int mode)
 {
     expand_t margin;
     int ret, i, nnodes = agnnodes(g);
-    nitem *nlist = N_GNEW(nnodes, nitem);
+    nitem *nlist = gv_calloc(nnodes, sizeof(nitem));
     nitem *p = nlist;
     node_t *n;
 
@@ -662,9 +565,11 @@ int cAdjust(graph_t * g, int mode)
 	case AM_ORTHO :
 	    constrainX(g, nlist, nnodes, intersectY0, 1);
 	    constrainY(g, nlist, nnodes, intersectX, 1);
+	    break;
 	case AM_ORTHO_YX :
 	    constrainY(g, nlist, nnodes, intersectX0, 1);
 	    constrainX(g, nlist, nnodes, intersectY, 1);
+	    break;
 	case AM_PORTHOXY:
 	    constrainX(g, nlist, nnodes, intersectY, 0);
 	    constrainY(g, nlist, nnodes, intersectX, 0);
@@ -706,10 +611,9 @@ typedef struct {
     node_t *np;
 } info;
 
-typedef int (*sortfn_t) (const void *, const void *);
-
-static int sortf(pointf * p, pointf * q)
-{
+static int sortf(const void *x, const void *y) {
+    const pointf *p = x;
+    const pointf *q = y;
     if (p->x < q->x)
 	return -1;
     else if (p->x > q->x)
@@ -733,7 +637,7 @@ static double compress(info * nl, int nn)
     for (i = 0; i < nn; i++) {
 	q = p + 1;
 	for (j = i + 1; j < nn; j++) {
-	    if (overlap(p->bb, q->bb))
+	    if (OVERLAP(p->bb, q->bb))
 		return 0;
 	    if (p->pos.x == q->pos.x)
 		pt.x = HUGE_VAL;
@@ -758,24 +662,18 @@ static double compress(info * nl, int nn)
     return sc;
 }
 
-static pointf *mkOverlapSet(info * nl, int nn, int *cntp)
-{
+static pointf *mkOverlapSet(info *nl, size_t nn, size_t *cntp) {
     info *p = nl;
     info *q;
-    int sz = nn;
-    pointf *S = N_GNEW(sz + 1, pointf);
-    int i, j;
-    int cnt = 0;
+    LIST(pointf) S = {0};
 
-    for (i = 0; i < nn; i++) {
+    LIST_APPEND(&S, (pointf){0});
+
+    for (size_t i = 0; i < nn; i++) {
 	q = p + 1;
-	for (j = i + 1; j < nn; j++) {
-	    if (overlap(p->bb, q->bb)) {
+	for (size_t j = i + 1; j < nn; j++) {
+	    if (OVERLAP(p->bb, q->bb)) {
 		pointf pt;
-		if (cnt == sz) {
-		    sz += nn;
-		    S = RALLOC(sz + 1, S, pointf);
-		}
 		if (p->pos.x == q->pos.x)
 		    pt.x = HUGE_VAL;
 		else {
@@ -790,39 +688,41 @@ static pointf *mkOverlapSet(info * nl, int nn, int *cntp)
 		    if (pt.y < 1)
 			pt.y = 1;
 		}
-		S[++cnt] = pt;
+		LIST_APPEND(&S, pt);
 	    }
 	    q++;
 	}
 	p++;
     }
 
-    S = RALLOC(cnt + 1, S, pointf);
-    *cntp = cnt;
-    return S;
+    LIST_SHRINK_TO_FIT(&S);
+    pointf *ret;
+    LIST_DETACH(&S, &ret, cntp);
+    return ret;
 }
 
-static pointf computeScaleXY(pointf * aarr, int m)
-{
-    pointf *barr;
+static pointf computeScaleXY(pointf *aarr, size_t m) {
     double cost, bestcost;
-    int k, best = 0;
     pointf scale;
 
     aarr[0].x = 1;
     aarr[0].y = HUGE_VAL;
-    qsort(aarr + 1, m, sizeof(pointf), (sortfn_t) sortf);
+    qsort(aarr + 1, m - 1, sizeof(pointf), sortf);
 
-    barr = N_GNEW(m + 1, pointf);
-    barr[m].x = aarr[m].x;
-    barr[m].y = 1;
-    for (k = m - 1; k >= 0; k--) {
+    pointf *barr = gv_calloc(m, sizeof(pointf));
+    barr[m - 1].x = aarr[m - 1].x;
+    barr[m - 1].y = 1;
+    for (size_t k = m - 2; m > 1; k--) {
 	barr[k].x = aarr[k].x;
-	barr[k].y = MAX(aarr[k + 1].y, barr[k + 1].y);
+	barr[k].y = fmax(aarr[k + 1].y, barr[k + 1].y);
+	if (k == 0) {
+	    break;
+	}
     }
 
+    size_t best = 0;
     bestcost = HUGE_VAL;
-    for (k = 0; k <= m; k++) {
+    for (size_t k = 0; k < m; k++) {
 	cost = barr[k].x * barr[k].y;
 	if (cost < bestcost) {
 	    bestcost = cost;
@@ -833,32 +733,29 @@ static pointf computeScaleXY(pointf * aarr, int m)
     scale.x = barr[best].x;
     scale.y = barr[best].y;
 
+    free(barr);
     return scale;
 }
 
-/* computeScale:
- * For each (x,y) in aarr, scale has to be bigger than the smallest one.
+/* For each (x,y) in aarr, scale has to be bigger than the smallest one.
  * So, the scale is the max min.
  */
-static double computeScale(pointf * aarr, int m)
-{
-    int i;
+static double computeScale(pointf *aarr, size_t m) {
     double sc = 0;
     double v;
     pointf p;
 
     aarr++;
-    for (i = 1; i <= m; i++) {
+    for (size_t i = 1; i < m; i++) {
 	p = *aarr++;
-	v = MIN(p.x, p.y);
+	v = fmin(p.x, p.y);
 	if (v > sc)
 	    sc = v;
     }
     return sc;
 }
 
-/* scAdjust:
- * Scale the layout.
+/* Scale the layout.
  * equal > 0  => scale uniformly in x and y to remove overlaps
  * equal = 0  => scale separately in x and y to remove overlaps
  * equal < 0  => scale down uniformly in x and y to remove excess space
@@ -870,14 +767,13 @@ static double computeScale(pointf * aarr, int m)
 int scAdjust(graph_t * g, int equal)
 {
     int nnodes = agnnodes(g);
-    info *nlist = N_GNEW(nnodes, info);
+    info *nlist = gv_calloc(nnodes, sizeof(info));
     info *p = nlist;
     node_t *n;
     pointf s;
     int i;
     expand_t margin;
     pointf *aarr;
-    int m;
 
     margin = sepFactor (g);
     if (margin.doAdd) {
@@ -889,8 +785,8 @@ int scAdjust(graph_t * g, int equal)
     for (n = agfstnode(g); n; n = agnxtnode(g, n)) {
 	double w2, h2;
 	if (margin.doAdd) {
-	    w2 = (ND_width(n) / 2.0) + margin.x;
-	    h2 = (ND_height(n) / 2.0) + margin.y;
+	    w2 = ND_width(n) / 2.0 + margin.x;
+	    h2 = ND_height(n) / 2.0 + margin.y;
 	}
 	else {
 	    w2 = margin.x * ND_width(n) / 2.0;
@@ -916,9 +812,11 @@ int scAdjust(graph_t * g, int equal)
 	}
 	if (Verbose) fprintf(stderr, "compress %g \n", s.x);
     } else {
-	aarr = mkOverlapSet(nlist, nnodes, &m);
+	size_t m;
+	assert(nnodes >= 0);
+	aarr = mkOverlapSet(nlist, (size_t)nnodes, &m);
 
-	if (m == 0) {		/* no overlaps */
+	if (m == 1) { // no overlaps
 	    free(aarr);
 	    free(nlist);
 	    return 0;

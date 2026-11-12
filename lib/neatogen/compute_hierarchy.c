@@ -1,21 +1,20 @@
-/* $Id$ $Revision$ */
-/* vim:set shiftwidth=4 ts=8: */
-
 /*************************************************************************
  * Copyright (c) 2011 AT&T Intellectual Property 
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
- * http://www.eclipse.org/legal/epl-v10.html
+ * https://www.eclipse.org/legal/epl-v10.html
  *
- * Contributors: See CVS logs. Details at http://www.graphviz.org/
+ * Contributors: Details at https://graphviz.org
  *************************************************************************/
 
-#include <digcola.h>
-#ifdef DIGCOLA
-#include "kkutils.h"
+#include "config.h"
 
-static int *given_levels = NULL;
+#include <neatogen/digcola.h>
+#include <util/alloc.h>
+#ifdef DIGCOLA
+#include <neatogen/kkutils.h>
+
 /*
  * This function partitions the graph nodes into levels
  * according to the minimizer of the hierarchy energy.
@@ -26,7 +25,7 @@ static int *given_levels = NULL;
  * This is controlled by two parameters: 'abs_tol' and 
  * 'relative_tol'. The smaller these two are, the more 
  * levels we'll get. 
- * More speciffically:
+ * More specifically:
  * We never consider gaps smaller than 'abs_tol'
  * Additionally, we never consider gaps smaller than 'abs_tol'*<avg_gap>
  * 
@@ -53,8 +52,6 @@ compute_hierarchy(vtx_data * graph, int n, double abs_tol,
 {
     double *y;
     int i, rv=0;
-    double spread;
-    int use_given_levels = FALSE;
     int *ordering;
     int *levels;
     double tol;			/* node 'i' precedes 'j' in hierarchy iff y[i]-y[j]>tol */
@@ -65,36 +62,19 @@ compute_hierarchy(vtx_data * graph, int n, double abs_tol,
     if (given_coords) {
 	y = given_coords;
     } else {
-	y = N_GNEW(n, double);
+	y = gv_calloc(n, sizeof(double));
 	if (compute_y_coords(graph, n, y, n)) {
 	    rv = 1;
 	    goto finish;    
 	}
     }
 
-    /* sort nodes accoridng to their y-ordering */
-    *orderingp = ordering = N_NEW(n, int);
+    // sort nodes according to their y-ordering
+    *orderingp = ordering = gv_calloc(n, sizeof(int));
     for (i = 0; i < n; i++) {
 	ordering[i] = i;
     }
-    quicksort_place(y, ordering, 0, n - 1);
-
-    spread = y[ordering[n - 1]] - y[ordering[0]];
-
-    /* after spread is computed, we may take the y-coords as the given levels */
-    if (given_levels) {
-	use_given_levels = TRUE;
-	for (i = 0; i < n; i++) {
-	    use_given_levels = use_given_levels && given_levels[i] >= 0;
-	}
-    }
-    if (use_given_levels) {
-	for (i = 0; i < n; i++) {
-	    y[i] = given_levels[i];
-	    ordering[i] = i;
-	}
-	quicksort_place(y, ordering, 0, n - 1);
-    }
+    quicksort_place(y, ordering, n);
 
     /* compute tolerance
      * take the maximum between 'abs_tol' and a fraction of the average gap
@@ -115,11 +95,11 @@ compute_hierarchy(vtx_data * graph, int n, double abs_tol,
     }
     *num_levelsp = num_levels;
     if (num_levels == 0) {
-	*levelsp = levels = N_GNEW(1, int);
+	*levelsp = levels = gv_calloc(1, sizeof(int));
 	levels[0] = n;
     } else {
 	int count = 0;
-	*levelsp = levels = N_GNEW(num_levels, int);
+	*levelsp = levels = gv_calloc(num_levels, sizeof(int));
 	for (i = 1; i < n; i++) {
 	    if (y[ordering[i]] - y[ordering[i - 1]] > tol) {
 		levels[count++] = i;

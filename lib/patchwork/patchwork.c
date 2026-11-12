@@ -1,21 +1,23 @@
-/* $Id$Revision: */
-/* vim:set shiftwidth=4 ts=8: */
-
 /*************************************************************************
  * Copyright (c) 2011 AT&T Intellectual Property 
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
- * http://www.eclipse.org/legal/epl-v10.html
+ * https://www.eclipse.org/legal/epl-v10.html
  *
- * Contributors: See CVS logs. Details at http://www.graphviz.org/
+ * Contributors: Details at https://graphviz.org
  *************************************************************************/
+
+#include "config.h"
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <patchwork.h>
-#include <tree_map.h>
-#include "render.h"
+#include <patchwork/patchwork.h>
+#include <patchwork/tree_map.h>
+#include <common/render.h>
+#include <util/alloc.h>
+#include <util/gv_math.h>
+#include <util/list.h>
 
 typedef struct treenode_t treenode_t;
 struct treenode_t {
@@ -28,7 +30,7 @@ struct treenode_t {
 	Agnode_t *n;
     } u;
     int kind;
-    int n_children;
+    size_t n_children;
 };
 
 #define DFLT_SZ 1.0
@@ -55,17 +57,14 @@ void dumpTree (treenode_t* r, int ind)
 static double fullArea (treenode_t* p, attrsym_t* mp)
 {
     double m = late_double (p->u.subg, mp, 0, 0);
-    if (m == 0) return p->child_area;
-    else {
-	double wid = (2.0*m + sqrt(p->child_area));
-	return wid*wid;
-    }
+    double wid = 2.0 * m + sqrt(p->child_area);
+    return wid * wid;
 }
 
 static double getArea (void* obj, attrsym_t* ap)
 {
     double area = late_double (obj, ap, DFLT_SZ, 0);
-    if (area == 0) area = DFLT_SZ;
+    if (is_exactly_zero(area)) area = DFLT_SZ;
     area *= SCALE;
     return area;
 }
@@ -74,7 +73,7 @@ static double getArea (void* obj, attrsym_t* ap)
  */
 static treenode_t* mkTreeNode (Agnode_t* n, attrsym_t* ap)
 {
-    treenode_t *p = NEW(treenode_t);
+    treenode_t *p = gv_alloc(sizeof(treenode_t));
 
     p->area = getArea (n, ap);
     p->kind = AGNODE;
@@ -91,18 +90,19 @@ static treenode_t* mkTreeNode (Agnode_t* n, attrsym_t* ap)
  */
 static treenode_t *mkTree (Agraph_t * g, attrsym_t* gp, attrsym_t* ap, attrsym_t* mp)
 {
-    treenode_t *p = NEW(treenode_t);
+    treenode_t *p = gv_alloc(sizeof(treenode_t));
     Agraph_t *subg;
     Agnode_t *n;
     treenode_t *cp;
     treenode_t *first = 0;
     treenode_t *prev = 0;
-    int i, n_children = 0;
+    int i;
     double area = 0;
 
     p->kind = AGRAPH;
     p->u.subg = g;
 
+    size_t n_children = 0;
     for (i = 1; i <= GD_n_cluster(g); i++) {
 	subg = GD_clust(g)[i];
 	cp = mkTree (subg, gp, ap, mp);
@@ -134,57 +134,48 @@ static treenode_t *mkTree (Agraph_t * g, attrsym_t* gp, attrsym_t* ap, attrsym_t
     return p;
 }
 
-static int nodecmp (treenode_t** p0, treenode_t** p1)
-{
-    double diff = (*p0)->area - (*p1)->area;
-
-    if (diff < 0) return 1;
-    else if (diff > 0) return -1;
-    else return 0;
+static int nodecmp(const void *x, const void *y) {
+  const treenode_t *const *p0 = x;
+  const treenode_t *const *p1 = y;
+  if ((*p0)->area < (*p1)->area) {
+    return 1;
+  }
+  if ((*p0)->area > (*p1)->area) {
+    return -1;
+  }
+  return 0;
 }
 
 static void layoutTree(treenode_t * tree)
 {
-    rectangle *recs;
-    treenode_t** nodes;
-    double* areas_sorted;
-    int i, nc;
-    treenode_t* cp;
-
-    /* if (tree->kind == AGNODE) return; */
     if (tree->n_children == 0) return;
 
-    nc = tree->n_children;
-    nodes = N_NEW(nc, treenode_t*);
-    cp = tree->leftchild;
-    for (i = 0; i < nc; i++) {
-	nodes[i] = cp;
+    size_t nc = tree->n_children;
+    LIST(treenode_t *) nodes = {0};
+    LIST_RESERVE(&nodes, nc);
+    treenode_t *cp = tree->leftchild;
+    for (size_t i = 0; i < nc; i++) {
+	LIST_APPEND(&nodes, cp);
 	cp = cp->rightsib;
     }
 
-    qsort (nodes, nc, sizeof(treenode_t*), (qsort_cmpf)nodecmp);
-    areas_sorted = N_NEW(nc,double);
-    for (i = 0; i < nc; i++) {
-	areas_sorted[i] = nodes[i]->area;
+    LIST_SORT(&nodes, nodecmp);
+    double* areas_sorted = gv_calloc(nc, sizeof(double));
+    for (size_t i = 0; i < nc; i++) {
+	areas_sorted[i] = LIST_GET(&nodes, i)->area;
     }
-    if (tree->area == tree->child_area)
-	recs = tree_map(nc, areas_sorted, tree->r);
-    else {
-	rectangle crec;
-	double disc, delta, m, h = tree->r.size[1], w = tree->r.size[0];
-	crec.x[0] = tree->r.x[0];
-	crec.x[1] = tree->r.x[1];
-	delta = h - w;
-	disc = sqrt(delta*delta + 4.0*tree->child_area);
-	m = (h + w - disc)/2.0;
-	crec.size[0] = w - m;
-	crec.size[1] = h - m;
-	recs = tree_map(nc, areas_sorted, crec);
-    }
+    const double h = tree->r.size[1];
+    const double w = tree->r.size[0];
+    const double delta = h - w;
+    const double disc = sqrt(delta * delta + 4.0 * tree->child_area);
+    const double m = (h + w - disc) / 2.0;
+    const rectangle crec = {.x = {tree->r.x[0], tree->r.x[1]},
+                            .size = {w - m, h - m}};
+    rectangle *const recs = tree_map(nc, areas_sorted, crec);
     if (Verbose)
 	fprintf (stderr, "rec %f %f %f %f\n", tree->r.x[0], tree->r.x[1], tree->r.size[0], tree->r.size[1]);
-    for (i = 0; i < nc; i++) {
-	nodes[i]->r = recs[i];
+    for (size_t i = 0; i < nc; i++) {
+	LIST_GET(&nodes, i)->r = recs[i];
 	if (Verbose)
 	    fprintf (stderr, "%f - %f %f %f %f = %f (%f %f %f %f)\n", areas_sorted[i],
         	recs[i].x[0]-recs[i].size[0]*0.5, recs[i].x[1]-recs[i].size[1]*0.5,
@@ -192,12 +183,12 @@ static void layoutTree(treenode_t * tree)
         	recs[i].x[0], recs[i].x[1],  recs[i].size[0], recs[i].size[1]);
 
     }
-    free (nodes);
+    LIST_FREE(&nodes);
     free (areas_sorted);
     free (recs);
 
     cp = tree->leftchild;
-    for (i = 0; i < nc; i++) {
+    for (size_t i = 0; i < nc; i++) {
 	if (cp->kind == AGRAPH)
 	    layoutTree (cp);
 	cp = cp->rightsib;
@@ -210,7 +201,7 @@ static void finishNode(node_t * n)
     if (N_fontsize) {
 	char* str = agxget(n, N_fontsize);
 	if (*str == '\0') {
-	    sprintf (buf, "%.03f", ND_ht(n)*0.7); 
+	    snprintf(buf, sizeof(buf), "%.03f", ND_ht(n)*0.7);
 	    agxset(n, N_fontsize, buf);
 	}
     }
@@ -262,9 +253,9 @@ static void freeTree (treenode_t* tp)
 {
     treenode_t* cp = tp->leftchild;
     treenode_t* rp;
-    int i, nc = tp->n_children;
+    size_t nc = tp->n_children;
 
-    for (i = 0; i < nc; i++) {
+    for (size_t i = 0; i < nc; i++) {
 	rp = cp->rightsib;
 	freeTree (cp);
 	cp = rp;
@@ -284,7 +275,7 @@ void patchworkLayout(Agraph_t * g)
 
     root = mkTree (g,gp,ap,mp);
     total = root->area;
-    root->r = rectangle_new(0, 0, sqrt(total + 0.1), sqrt(total + 0.1));
+    root->r = (rectangle){{0, 0}, {sqrt(total + 0.1), sqrt(total + 0.1)}};
     layoutTree(root);
     walkTree(root);
     freeTree (root);

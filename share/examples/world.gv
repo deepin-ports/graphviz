@@ -1,3 +1,12 @@
+/** internet map
+ *
+ * This graph accompanies the paper Gansner et al, “Topological Fisheye Views
+ * for Visualizing Large Graphs” in IEEE INFOVIS 2004:
+ *
+ *   This Internet map ((|V|=87,931, |E|=87,930)) is too large to visualize as a
+ *   flat structure.
+ */
+
 strict graph chaco {
 Graph [TopView="1",DataAttribute1="IP",DataAttribute2="HOST"];
 Graph [hostbtncount=4];

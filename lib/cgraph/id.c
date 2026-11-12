@@ -1,105 +1,112 @@
-/* $Id$ $Revision$ */
-/* vim:set shiftwidth=4 ts=8: */
-
+/**
+ * @file
+ * @ingroup cgraph_core
+ */
 /*************************************************************************
  * Copyright (c) 2011 AT&T Intellectual Property 
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
- * http://www.eclipse.org/legal/epl-v10.html
+ * https://www.eclipse.org/legal/epl-v10.html
  *
- * Contributors: See CVS logs. Details at http://www.graphviz.org/
+ * Contributors: Details at https://graphviz.org
  *************************************************************************/
 
+#include "config.h"
+
+#include <assert.h>
+#include <stdbool.h>
 #include <stdio.h>
-#include <cghdr.h>
+#include <cgraph/cghdr.h>
+#include <inttypes.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <util/alloc.h>
 
 /* a default ID allocator that works off the shared string lib */
 
+/// information the ID allocator needs to do its job
+typedef struct {
+  IDTYPE counter; ///< base to derive next identifier from
+  Agraph_t *g;    ///< graph in use
+} state_t;
+
 static void *idopen(Agraph_t * g, Agdisc_t* disc)
 {
-    return g;
+    (void)disc;
+
+  state_t *s = gv_alloc(sizeof(state_t));
+  *s = (state_t){.g = g};
+  return s;
 }
 
 static long idmap(void *state, int objtype, char *str, IDTYPE *id,
 		  int createflag)
 {
     char *s;
-    static IDTYPE ctr = 1;
+    state_t *st = state;
 
-    NOTUSED(objtype);
+    (void)objtype;
     if (str) {
-        Agraph_t *g;
-        g = state;
         if (createflag)
-            s = agstrdup(g, str);
+            s = agstrdup(st->g, str);
         else
-            s = agstrbind(g, str);
-        *id = (IDTYPE) s;
+            s = agstrbind(st->g, str);
+        // The scheme of using pointers as the IDs of named objects and odd
+        // numbers as the IDs of unnamed objects relies on heap pointers being
+        // even, to avoid collisions. So the low bit had better be unset.
+        assert((uintptr_t)s % 2 == 0 &&
+               "heap pointer with low bit set will collide with anonymous IDs");
+        *id = (IDTYPE)(uintptr_t)s;
     } else {
-        *id = ctr;
-        ctr += 2;
+        *id = st->counter * 2 + 1;
+        ++st->counter;
     }
-    return TRUE;
-}
-
-	/* we don't allow users to explicitly set IDs, either */
-static long idalloc(void *state, int objtype, IDTYPE request)
-{
-    NOTUSED(state);
-    NOTUSED(objtype);
-    NOTUSED(request);
-    return FALSE;
+    return 1;
 }
 
 static void idfree(void *state, int objtype, IDTYPE id)
 {
-    NOTUSED(objtype);
+    (void)objtype;
+    state_t *st = state;
     if (id % 2 == 0)
-	agstrfree((Agraph_t *) state, (char *) id);
+	agstrfree(st->g, (char *)(uintptr_t)id, false);
 }
 
 static char *idprint(void *state, int objtype, IDTYPE id)
 {
-    NOTUSED(state);
-    NOTUSED(objtype);
+    (void)state;
+    (void)objtype;
     if (id % 2 == 0)
-	return (char *) id;
+	return (char *)(uintptr_t)id;
     else
-	return NILstr;
-}
-
-static void idclose(void *state)
-{
-    NOTUSED(state);
+	return NULL;
 }
 
 static void idregister(void *state, int objtype, void *obj)
 {
-    NOTUSED(state);
-    NOTUSED(objtype);
-    NOTUSED(obj);
+    (void)state;
+    (void)objtype;
+    (void)obj;
 }
 
 Agiddisc_t AgIdDisc = {
     idopen,
     idmap,
-    idalloc,
     idfree,
     idprint,
-    idclose,
+    free,
     idregister
 };
 
 /* aux functions incl. support for disciplines with anonymous IDs */
 
 int agmapnametoid(Agraph_t * g, int objtype, char *str,
-          IDTYPE *result, int createflag)
-{
+          IDTYPE *result, bool createflag) {
     int rv;
 
-    if (str && (str[0] != LOCALNAMEPREFIX)) {
-	rv = AGDISC(g, id)->map(AGCLOS(g, id), objtype, str, result,
+    if (str && str[0] != LOCALNAMEPREFIX) {
+	rv = (int) AGDISC(g, id)->map(AGCLOS(g, id), objtype, str, result,
 				createflag);
 	if (rv)
 	    return rv;
@@ -115,17 +122,12 @@ int agmapnametoid(Agraph_t * g, int objtype, char *str,
 
     if (createflag) {
 	/* get a new anonymous ID, and store in the internal map */
-	rv = AGDISC(g, id)->map(AGCLOS(g, id), objtype, NILstr, result,
+	rv = (int) AGDISC(g, id)->map(AGCLOS(g, id), objtype, NULL, result,
 				createflag);
 	if (rv && str)
 	    aginternalmapinsert(g, objtype, str, *result);
     }
     return rv;
-}
-
-int agallocid(Agraph_t * g, int objtype, IDTYPE request)
-{
-    return AGDISC(g, id)->alloc(AGCLOS(g, id), objtype, request);
 }
 
 void agfreeid(Agraph_t * g, int objtype, IDTYPE id)
@@ -134,7 +136,7 @@ void agfreeid(Agraph_t * g, int objtype, IDTYPE id)
     (AGDISC(g, id)->free) (AGCLOS(g, id), objtype, id);
 }
 
-/* agnameof:
+/**
  * Return string representation of object.
  * In general, returns the name of node or graph,
  * and the key of an edge. If edge is anonymous, returns NULL.
@@ -144,20 +146,21 @@ char *agnameof(void *obj)
 {
     Agraph_t *g;
     char *rv;
-    static char buf[32];
 
     /* perform internal lookup first */
     g = agraphof(obj);
-    if ((rv = aginternalmapprint(g, AGTYPE(obj), AGID(obj))))
+    rv = aginternalmapprint(g, AGTYPE(obj), AGID(obj));
+    if (rv != NULL)
 	return rv;
 
     if (AGDISC(g, id)->print) {
-	if ((rv =
-	     AGDISC(g, id)->print(AGCLOS(g, id), AGTYPE(obj), AGID(obj))))
+	rv = AGDISC(g, id)->print(AGCLOS(g, id), AGTYPE(obj), AGID(obj));
+	if (rv != NULL)
 	    return rv;
     }
     if (AGTYPE(obj) != AGEDGE) {
-	sprintf(buf, "%c%ld", LOCALNAMEPREFIX, AGID(obj));
+	static char buf[32];
+	snprintf(buf, sizeof(buf), "%c%" PRIu64, LOCALNAMEPREFIX, AGID(obj));
 	rv = buf;
     }
     else

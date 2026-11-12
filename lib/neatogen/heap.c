@@ -1,149 +1,126 @@
-/* $Id$ $Revision$ */
-/* vim:set shiftwidth=4 ts=8: */
-
 /*************************************************************************
  * Copyright (c) 2011 AT&T Intellectual Property 
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
- * http://www.eclipse.org/legal/epl-v10.html
+ * https://www.eclipse.org/legal/epl-v10.html
  *
- * Contributors: See CVS logs. Details at http://www.graphviz.org/
+ * Contributors: Details at https://graphviz.org
  *************************************************************************/
 
+#include "config.h"
 
-#include "render.h"
-#include <stdio.h>
+#include <common/render.h>
+#include <stdbool.h>
 
-#include "mem.h"
-#include "hedges.h"
-#include "heap.h"
+#include <neatogen/hedges.h>
+#include <neatogen/heap.h>
+#include <util/alloc.h>
 
+struct pq {
+  Halfedge *hash; ///< backing storage
+  int hashsize;   ///< total allocated backing storage elements
+  int count;      ///< occupancy
+  int min;        ///< index of minimum element
+};
 
-static Halfedge *PQhash;
-static int PQhashsize;
-static int PQcount;
-static int PQmin;
-
-static int PQbucket(Halfedge * he)
-{
-    int bucket;
-    double b;
-
-    b = (he->ystar - ymin) / deltay * PQhashsize;
-    if (b < 0)
-	bucket = 0;
-    else if (b >= PQhashsize)
-	bucket = PQhashsize - 1;
-    else
-	bucket = b;
-    if (bucket < PQmin)
-	PQmin = bucket;
-    return (bucket);
+/// convert a `double` to an `int`, between bounds
+///
+/// @param lower Lower bound to limit to
+/// @param v Value to convert
+/// @param upper Upper bound to limit to
+/// @return A converted value in the range [lower, upper]
+static int clamp(int lower, double v, int upper) {
+  assert(upper >= lower);
+  if (v < lower) {
+    return lower;
+  }
+  if (v > upper) {
+    return upper;
+  }
+  return (int)v;
 }
 
-void PQinsert(Halfedge * he, Site * v, double offset)
-{
+static int PQbucket(pq_t *pq, Halfedge *he) {
+    const double deltay = ymax - ymin;
+    const int bucket =
+      clamp(0, (he->ystar - ymin) / deltay * pq->hashsize, pq->hashsize - 1);
+    if (bucket < pq->min)
+	pq->min = bucket;
+    return bucket;
+}
+
+/// `a > b`?
+static bool gt(double a_y, double a_x, double b_y, double b_x) {
+  if (a_y > b_y) {
+    return true;
+  }
+  if (a_y < b_y) {
+    return false;
+  }
+  return a_x > b_x;
+}
+
+void PQinsert(pq_t *pq, Halfedge *he, Site *v, double offset) {
     Halfedge *last, *next;
 
     he->vertex = v;
-    ref(v);
     he->ystar = v->coord.y + offset;
-    last = &PQhash[PQbucket(he)];
-    while ((next = last->PQnext) != (struct Halfedge *) NULL &&
-	   (he->ystar > next->ystar ||
-	    (he->ystar == next->ystar
-	     && v->coord.x > next->vertex->coord.x))) {
+    last = &pq->hash[PQbucket(pq, he)];
+    while ((next = last->PQnext) != NULL &&
+           gt(he->ystar, v->coord.x, next->ystar, next->vertex->coord.x)) {
 	last = next;
     }
     he->PQnext = last->PQnext;
     last->PQnext = he;
-    PQcount += 1;
+    ++pq->count;
 }
 
-void PQdelete(Halfedge * he)
-{
+void PQdelete(pq_t *pq, Halfedge *he) {
     Halfedge *last;
 
-    if (he->vertex != (Site *) NULL) {
-	last = &PQhash[PQbucket(he)];
+    if (he->vertex != NULL) {
+	last = &pq->hash[PQbucket(pq, he)];
 	while (last->PQnext != he)
 	    last = last->PQnext;
 	last->PQnext = he->PQnext;
-	PQcount -= 1;
-	deref(he->vertex);
-	he->vertex = (Site *) NULL;
+	--pq->count;
+	he->vertex = NULL;
     }
 }
 
-
-int PQempty(void)
-{
-    return (PQcount == 0);
+bool PQempty(const pq_t *pq) {
+  return pq->count == 0;
 }
 
-
-Point PQ_min(void)
-{
+Point PQ_min(pq_t *pq) {
     Point answer;
 
-    while (PQhash[PQmin].PQnext == (struct Halfedge *) NULL) {
-	PQmin += 1;
+    while (pq->hash[pq->min].PQnext == NULL) {
+      ++pq->min;
     }
-    answer.x = PQhash[PQmin].PQnext->vertex->coord.x;
-    answer.y = PQhash[PQmin].PQnext->ystar;
-    return (answer);
+    answer.x = pq->hash[pq->min].PQnext->vertex->coord.x;
+    answer.y = pq->hash[pq->min].PQnext->ystar;
+    return answer;
 }
 
-Halfedge *PQextractmin(void)
-{
-    Halfedge *curr;
-
-    curr = PQhash[PQmin].PQnext;
-    PQhash[PQmin].PQnext = curr->PQnext;
-    PQcount -= 1;
-    return (curr);
+Halfedge *PQextractmin(pq_t *pq) {
+    Halfedge *curr = pq->hash[pq->min].PQnext;
+    pq->hash[pq->min].PQnext = curr->PQnext;
+    --pq->count;
+    return curr;
 }
 
-void PQcleanup(void)
-{
-    free(PQhash);
-    PQhash = NULL;
+void PQcleanup(pq_t *pq) {
+  if (pq != NULL) {
+    free(pq->hash);
+  }
+  free(pq);
 }
 
-void PQinitialize(void)
-{
-    int i;
-
-    PQcount = 0;
-    PQmin = 0;
-    PQhashsize = 4 * sqrt_nsites;
-    if (PQhash == NULL)
-	PQhash = N_GNEW(PQhashsize, Halfedge);
-    for (i = 0; i < PQhashsize; i += 1)
-	PQhash[i].PQnext = (Halfedge *) NULL;
-}
-
-static void PQdumphe(Halfedge * p)
-{
-    printf("  [%p] %p %p %d %d %d %d %f\n",
-	   p, p->ELleft, p->ELright, p->ELedge->edgenbr,
-	   p->ELrefcnt, p->ELpm, (p->vertex ? p->vertex->sitenbr : -1),
-	   p->ystar);
-}
-
-void PQdump(void)
-{
-    int i;
-    Halfedge *p;
-
-    for (i = 0; i < PQhashsize; i += 1) {
-	printf("[%d]\n", i);
-	p = PQhash[i].PQnext;
-	while (p != NULL) {
-	    PQdumphe(p);
-	    p = p->PQnext;
-	}
-    }
-
+pq_t *PQinitialize(void) {
+  pq_t *pq = gv_alloc(sizeof(pq_t));
+  pq->hashsize = 4 * sqrt_nsites;
+  pq->hash = gv_calloc(pq->hashsize, sizeof(Halfedge));
+  return pq;
 }

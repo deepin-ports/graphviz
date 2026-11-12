@@ -1,178 +1,98 @@
-/* $Id$ $Revision$ */
-/* vim:set shiftwidth=4 ts=8: */
-
+/**
+ * @file
+ * @ingroup cgraph_core
+ */
 /*************************************************************************
- * Copyright (c) 2011 AT&T Intellectual Property 
+ * Copyright (c) 2011 AT&T Intellectual Property
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
- * http://www.eclipse.org/legal/epl-v10.html
+ * https://www.eclipse.org/legal/epl-v10.html
  *
- * Contributors: See CVS logs. Details at http://www.graphviz.org/
+ * Contributors: Details at https://graphviz.org
  *************************************************************************/
 
 
 /* requires flex (i.e. not lex)  */
+
+  /* By default, Flex emits a lexer using symbols prefixed with "yy". Graphviz
+   * contains multiple Flex-generated lexers, so we alter this prefix to avoid
+   * symbol clashes.
+   */
+%option prefix="aag"
+
+   /* Generate a reentrant parser with no global variables.
+    * All state will be contained in an opaque structure.
+    */
+%option reentrant bison-bridge
+
+   /* The generated structure will have space for user data.
+    */
+%option extra-type="struct aagextra_s *"
+
+  /* Avoid generating an unused input function. See
+     https://westes.github.io/flex/manual/Scanner-Options.html
+   */
+%option noinput
+
 %{
+#include <assert.h>
 #include <grammar.h>
-#include <cghdr.h>
-#include <agxbuf.h>
-#include <ctype.h>
+#include <cgraph/cghdr.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <string.h>
+#include <util/agxbuf.h>
+#include <util/gv_ctype.h>
+#include <util/startswith.h>
 // #define YY_BUF_SIZE 128000
 #define GRAPH_EOF_TOKEN		'@'		/* lex class must be defined below */
 	/* this is a workaround for linux flex */
-static int line_num = 1;
-static int html_nest = 0;  /* nesting level for html strings */
-static char* InputFile;
-static Agdisc_t	*Disc;
-static void 	*Ifile;
-static int graphType;
 
-  /* Reset line number */
-void agreadline(int n) { line_num = n; }
+#define YYSTYPE AAGSTYPE
 
-  /* (Re)set file:
-   */
-void agsetfile(char* f) { InputFile = f; line_num = 1; }
-
-/* There is a hole here, because switching channels 
- * requires pushing back whatever was previously read.
- * There probably is a right way of doing this.
+/* By default, Flex calls isatty() to determine whether the input it is
+ * scanning is coming from the user typing or from a file. However, our input
+ * is being provided by Graphviz' I/O channel mechanism, which does not have a
+ * valid file descriptor that supports isatty().
  */
-void aglexinit(Agdisc_t *disc, void *ifile) { Disc = disc; Ifile = ifile; graphType = 0;}
+#define isatty(x) gv_isatty_suppression
+int gv_isatty_suppression;
 
-#define isatty(x) 0
+static int read_input(aagscan_t yyscanner, char *buf, int max_size);
+
 #ifndef YY_INPUT
 #define YY_INPUT(buf,result,max_size) \
-	if ((result = Disc->io->afread(Ifile, buf, max_size)) < 0) \
+	if ((result = read_input(yyscanner, buf, max_size)) < 0) \
 		YY_FATAL_ERROR( "input in flex scanner failed" )
 #endif
 
 /* buffer for arbitrary length strings (longer than BUFSIZ) */
-static char	*Sbuf,*Sptr,*Send;
-static void beginstr(void) {
-	if (Sbuf == NIL(char*)) {
-		Sbuf = malloc(BUFSIZ);
-		Send = Sbuf + BUFSIZ;
-	}
-	Sptr = Sbuf;
-	*Sptr = 0;
-}
 
-static void addstr(char *src) {
-	char	c;
-	if (Sptr > Sbuf) Sptr--;
-	do {
-		do {c = *Sptr++ = *src++;} while (c && (Sptr < Send));
-		if (c) {
-			long	sz = Send - Sbuf;
-			long	off = Sptr - Sbuf;
-			sz *= 2;
-			Sbuf = (char*)realloc(Sbuf,sz);
-			Send = Sbuf + sz;
-			Sptr = Sbuf + off;
-		}
-	} while (c);
-}
-
-static void endstr(void) {
-	yylval.str = (char*)agstrdup(Ag_G_global,Sbuf);
-	*Sbuf = 0;
-}
-
-static void endstr_html(void) {
-	yylval.str = (char*)agstrdup_html(Ag_G_global,Sbuf);
-	*Sbuf = 0;
-}
-
-static void
-storeFileName (char* fname, int len)
-{
-    static int cnt;
-    static char* buf;
-
-    if (len > cnt) {
-	if (cnt) buf = (char*)realloc (buf, len+1);
-	else buf = (char*)malloc (len+1);
-	cnt = len;
-    }
-    strcpy (buf, fname);
-    InputFile = buf;
-}
+static void beginstr(aagscan_t yyscanner);
+static void addstr(aagscan_t yyscanner, char *src);
+static void endstr(aagscan_t yyscanner);
+static void endstr_html(aagscan_t yyscanner);
+static void storeFileName(aagscan_t yyscanner, const char* fname, size_t len);
 
 /* ppDirective:
  * Process a possible preprocessor line directive.
- * yytext = #.*
+ * aagtext = #.*
  */
-static void ppDirective (void)
-{
-    int r, cnt, lineno;
-    char buf[2];
-    char* s = yytext + 1;  /* skip initial # */
-
-    if (strncmp(s, "line", 4) == 0) s += 4;
-    r = sscanf(s, "%d %1[\"]%n", &lineno, buf, &cnt);
-    if (r > 0) { /* got line number */ 
-	line_num = lineno - 1;
-	if (r > 1) { /* saw quote */
-	    char* p = s + cnt;
-	    char* e = p;
-	    while (*e && (*e != '"')) e++; 
-	    if (e != p && *e == '"') {
- 		*e = '\0';
-		storeFileName (p, e-p);
-	    }
-	}
-    }
-}
+static void ppDirective (aagscan_t yyscanner);
 
 /* twoDots:
  * Return true if token has more than one '.';
  * we know the last character is a '.'.
  */
-static int twoDots(void)
-{
-    int i;
-    for (i = yyleng-2; i >= 0; i--) {
-	if (((unsigned char)yytext[i]) == '.')
-	    return 1;
-    }
-    return 0;
-}
+static bool twoDots(aagscan_t yyscanner);
 
 /* chkNum:
  * The regexp for NUMBER allows a terminating letter or '.'.
  * This way we can catch a number immediately followed by a name
  * or something like 123.456.78, and report this to the user.
  */
-static int chkNum(void) {
-    unsigned char c = (unsigned char)yytext[yyleng-1];   /* last character */
-    if ((!isdigit(c) && (c != '.')) || ((c == '.') && twoDots())) {  /* c is letter */
-	unsigned char xbuf[BUFSIZ];
-	char buf[BUFSIZ];
-	agxbuf  xb;
-	char* fname;
-
-	if (InputFile)
-	    fname = InputFile;
-	else
-	    fname = "input";
-
-	agxbinit(&xb, BUFSIZ, xbuf);
-
-	agxbput(&xb,"syntax ambiguity - badly delimited number '");
-	agxbput(&xb,yytext);
-	sprintf(buf,"' in line %d of ", line_num);
-	agxbput(&xb,buf);
-	agxbput(&xb,fname);
-	agxbput(&xb, " splits into two tokens\n");
-	agerr(AGWARN, "%s", agxbuse(&xb));
-
-	agxbfree(&xb);
-	return 1;
-    }
-    else return 0;
-}
+static int chkNum(aagscan_t yyscanner);
 
 /* The LETTER class below consists of ascii letters, underscore, all non-ascii
  * characters. This allows identifiers to have characters from any
@@ -193,103 +113,200 @@ ID		({NAME}|{NUMBER})
 %x hstring
 %%
 {GRAPH_EOF_TOKEN}		return(EOF);
-<INITIAL,comment,qstring>\n	line_num++;
+<INITIAL,comment>\n	yyextra->line_num++;
 "/*"					BEGIN(comment);
 <comment>[^*\n]*		/* eat anything not a '*' */
 <comment>"*"+[^*/\n]*	/* eat up '*'s not followed by '/'s */
 <comment>"*"+"/"		BEGIN(INITIAL);
 "//".*					/* ignore C++-style comments */
-^"#".*					ppDirective ();
+^"#".*					ppDirective (yyscanner);
 "#".*					/* ignore shell-like comments */
 [ \t\r]					/* ignore whitespace */
 "\xEF\xBB\xBF"				/* ignore BOM */
 "node"					return(T_node);			/* see tokens in agcanonstr */
 "edge"					return(T_edge);
-"graph"					if (!graphType) graphType = T_graph; return(T_graph);
-"digraph"				if (!graphType) graphType = T_digraph; return(T_digraph);
+"graph"					if (!yyextra->graphType) yyextra->graphType = T_graph; return(T_graph);
+"digraph"				if (!yyextra->graphType) yyextra->graphType = T_digraph; return(T_digraph);
 "strict"				return(T_strict);
 "subgraph"				return(T_subgraph);
-"->"				if (graphType == T_digraph) return(T_edgeop); else return('-');
-"--"				if (graphType == T_graph) return(T_edgeop); else return('-');
-{NAME}					{ yylval.str = (char*)agstrdup(Ag_G_global,yytext); return(T_atom); }
-{NUMBER}				{ if (chkNum()) yyless(yyleng-1); yylval.str = (char*)agstrdup(Ag_G_global,yytext); return(T_atom); }
-["]						BEGIN(qstring); beginstr();
-<qstring>["]			BEGIN(INITIAL); endstr(); return (T_qatom);
-<qstring>[\\]["]		addstr ("\"");
-<qstring>[\\][\\]		addstr ("\\\\");
-<qstring>[\\][\n]		line_num++; /* ignore escaped newlines */
-<qstring>([^"\\]*|[\\])		addstr(yytext);
-[<]						BEGIN(hstring); html_nest = 1; beginstr();
-<hstring>[>]			html_nest--; if (html_nest) addstr(yytext); else {BEGIN(INITIAL); endstr_html(); return (T_qatom);}
-<hstring>[<]			html_nest++; addstr(yytext);
-<hstring>[\n]			addstr(yytext); line_num++; /* add newlines */
-<hstring>([^><\n]*)		addstr(yytext);
-.						return (yytext[0]);
+"->"				if (yyextra->graphType == T_digraph) return(T_edgeop); else return('-');
+"--"				if (yyextra->graphType == T_graph) return(T_edgeop); else return('-');
+{NAME}					{ yylval->str = agstrdup(yyextra->G,aagget_text(yyscanner)); return(T_atom); }
+{NUMBER}				{ if (chkNum(yyscanner)) yyless(aagget_leng(yyscanner)-1); yylval->str = agstrdup(yyextra->G,aagget_text(yyscanner)); return(T_atom); }
+["]						BEGIN(qstring); beginstr(yyscanner);
+<qstring>["]			BEGIN(INITIAL); endstr(yyscanner); return (T_qatom);
+<qstring>[\\]["]		addstr (yyscanner,"\"");
+<qstring>[\\][\\]		addstr (yyscanner,"\\\\");
+<qstring>[\\][\n]		yyextra->line_num++; /* ignore escaped newlines */
+<qstring>[\n]			addstr (yyscanner,"\n"); yyextra->line_num++;
+<qstring>([^"\\\n]*|[\\])		addstr(yyscanner,aagget_text(yyscanner));
+[<]						BEGIN(hstring); yyextra->html_nest = 1; beginstr(yyscanner);
+<hstring>[>]			yyextra->html_nest--; if (yyextra->html_nest) addstr(yyscanner,aagget_text(yyscanner)); else {BEGIN(INITIAL); endstr_html(yyscanner); return (T_qatom);}
+<hstring>[<]			yyextra->html_nest++; addstr(yyscanner,aagget_text(yyscanner));
+<hstring>[\n]			addstr(yyscanner,aagget_text(yyscanner)); yyextra->line_num++; /* add newlines */
+<hstring>([^><\n]*)		addstr(yyscanner,aagget_text(yyscanner));
+.						return aagget_text(yyscanner)[0];
 %%
- 
-void yyerror(char *str)
-{
-	unsigned char	xbuf[BUFSIZ];
-	char	buf[BUFSIZ];
-	agxbuf  xb;
 
-	agxbinit(&xb, BUFSIZ, xbuf);
-	if (InputFile) {
-		agxbput (&xb, InputFile);
-		agxbput (&xb, ": ");
+void aagerror(aagscan_t yyscanner, const char *str)
+{
+	/* for YYSTATE macro */
+	struct yyguts_t *yyg = yyscanner;
+
+	agxbuf xb = {0};
+	if (yyextra->InputFile) {
+		agxbprint (&xb, "%s: ", yyextra->InputFile);
 	}
-	agxbput (&xb, str);
-	sprintf(buf," in line %d", line_num);
-	agxbput (&xb, buf);
-	if (*yytext) {
-		agxbput(&xb," near '");
-		agxbput (&xb, yytext);
-		agxbputc (&xb, '\'');
+	agxbprint (&xb, "%s in line %d", str, yyextra->line_num);
+	if (*aagget_text(yyscanner)) {
+		agxbprint(&xb, " near '%s'", aagget_text(yyscanner));
 	}
 	else switch (YYSTATE) {
-	case qstring :
-		sprintf(buf, " scanning a quoted string (missing endquote? longer than %d?)", YY_BUF_SIZE);
-		agxbput (&xb, buf);
-		if (*Sbuf) {
-			int len = strlen(Sbuf);
-			agxbput (&xb, "\nString starting:\"");
-			if (len > 80)
-				Sbuf[80] = '\0';
-			agxbput (&xb, Sbuf);
+	case qstring: {
+		agxbprint(&xb, " scanning a quoted string (missing endquote? longer than %d?)", YY_BUF_SIZE);
+		if (agxblen(&yyextra->Sbuf) > 0) {
+			agxbprint(&xb, "\nString starting:\"%.80s", agxbuse(&yyextra->Sbuf));
 		}
 		break;
-	case hstring :
-		sprintf(buf, " scanning a HTML string (missing '>'? bad nesting? longer than %d?)", YY_BUF_SIZE);
-		agxbput (&xb, buf);
-		if (*Sbuf) {
-			int len = strlen(Sbuf);
-			agxbput (&xb, "\nString starting:<");
-			if (len > 80)
-				Sbuf[80] = '\0';
-			agxbput (&xb, Sbuf);
+	}
+	case hstring: {
+		agxbprint(&xb, " scanning a HTML string (missing '>'? bad nesting? longer than %d?)", YY_BUF_SIZE);
+		if (agxblen(&yyextra->Sbuf) > 0) {
+			agxbprint(&xb, "\nString starting:<%.80s", agxbuse(&yyextra->Sbuf));
 		}
 		break;
+	}
 	case comment :
-		sprintf(buf, " scanning a /*...*/ comment (missing '*/? longer than %d?)", YY_BUF_SIZE);
-		agxbput (&xb, buf);
+		agxbprint(&xb, " scanning a /*...*/ comment (missing '*/? longer than %d?)", YY_BUF_SIZE);
+		break;
+	default: // nothing extra to note
 		break;
 	}
 	agxbputc (&xb, '\n');
-	agerr(AGERR, "%s", agxbuse(&xb));
+	agerrorf("%s", agxbuse(&xb));
 	agxbfree(&xb);
     BEGIN(INITIAL);
 }
 /* must be here to see flex's macro defns */
-void aglexeof() { unput(GRAPH_EOF_TOKEN); }
+void aglexeof(aagscan_t yyscanner) {
+  struct yyguts_t *yyg = yyscanner;
+  unput(GRAPH_EOF_TOKEN);
+}
 
-void aglexbad() { YY_FLUSH_BUFFER; }
+void aglexbad(aagscan_t yyscanner) {
+  struct yyguts_t *yyg = yyscanner;
+  YY_FLUSH_BUFFER;
+}
 
 #ifndef YY_CALL_ONLY_ARG
-# define YY_CALL_ONLY_ARG void
+# define YY_CALL_ONLY_ARG aagscan_t yyscanner
 #endif
 
-int yywrap(YY_CALL_ONLY_ARG)
+int aagwrap(YY_CALL_ONLY_ARG)
 {
+	(void)yyscanner;
 	return 1;
 }
 
+static void beginstr(aagscan_t yyscanner) {
+  aagextra_t *ctx = aagget_extra(yyscanner);
+  // avoid unused variable warning in case assert() is compiled away.
+  (void)ctx;
+  // nothing required, but we should not have pending string data
+  assert(agxblen(&ctx->Sbuf) == 0 &&
+         "pending string data that was not consumed (missing "
+         "endstr()/endhtmlstr()?)");
+}
+
+static void addstr(aagscan_t yyscanner, char *src) {
+  aagextra_t *ctx = aagget_extra(yyscanner);
+  agxbput(&ctx->Sbuf, src);
+}
+
+static void endstr(aagscan_t yyscanner) {
+  aagextra_t *ctx = aagget_extra(yyscanner);
+  aagget_lval(yyscanner)->str = agstrdup(ctx->G, agxbuse(&ctx->Sbuf));
+}
+
+static void endstr_html(aagscan_t yyscanner) {
+  aagextra_t *ctx = aagget_extra(yyscanner);
+  aagget_lval(yyscanner)->str = agstrdup_html(ctx->G, agxbuse(&ctx->Sbuf));
+}
+
+static void storeFileName(aagscan_t yyscanner, const char* fname, size_t len) {
+	aagextra_t *ctx = aagget_extra(yyscanner);
+	agxbuf *buffer = &ctx->InputFileBuffer;
+	agxbput_n(buffer, fname, len);
+	ctx->InputFile = agxbuse(buffer);
+}
+
+/* ppDirective:
+ * Process a possible preprocessor line directive.
+ * aagtext = #.*
+ */
+static void ppDirective (aagscan_t yyscanner)
+{
+    int r, cnt, lineno;
+    char buf[2];
+    char* s = aagget_text(yyscanner) + 1;  /* skip initial # */
+
+    if (startswith(s, "line")) s += strlen("line");
+    r = sscanf(s, "%d %1[\"]%n", &lineno, buf, &cnt);
+    if (r > 0) { /* got line number */
+	// ignore if line number was out of range
+	if (lineno <= 0) {
+	    return;
+	}
+	aagget_extra(yyscanner)->line_num = lineno - 1;
+	if (r > 1) { /* saw quote */
+	    char* p = s + cnt;
+	    char* e = p;
+	    while (*e && *e != '"') e++;
+	    if (e != p && *e == '"') {
+ 		*e = '\0';
+		storeFileName(yyscanner, p, (size_t)(e - p));
+	    }
+	}
+    }
+}
+
+/* twoDots:
+ * Return true if token has more than one '.';
+ * we know the last character is a '.'.
+ */
+static bool twoDots(aagscan_t yyscanner) {
+  const char *dot = strchr(aagget_text(yyscanner), '.');
+  // was there a dot and was it not the last character?
+  return dot != NULL && dot != &aagget_text(yyscanner)[aagget_leng(yyscanner) - 1];
+}
+
+/* chkNum:
+ * The regexp for NUMBER allows a terminating letter or '.'.
+ * This way we can catch a number immediately followed by a name
+ * or something like 123.456.78, and report this to the user.
+ */
+static int chkNum(aagscan_t yyscanner) {
+    char c = aagget_text(yyscanner)[aagget_leng(yyscanner) - 1]; // last character
+    if ((!gv_isdigit(c) && c != '.') || (c == '.' && twoDots(yyscanner))) { // c is letter
+	const char* fname;
+	aagextra_t *ctx = aagget_extra(yyscanner);
+
+	if (ctx->InputFile)
+	    fname = ctx->InputFile;
+	else
+	    fname = "input";
+
+	agwarningf("syntax ambiguity - badly delimited number '%s' in line %d of "
+	  "%s splits into two tokens\n", aagget_text(yyscanner), ctx->line_num, fname);
+
+	return 1;
+    }
+    else return 0;
+}
+
+
+static int read_input(aagscan_t scanner, char *buf, int max_size)
+{
+	aagextra_t *ctx = aagget_extra(scanner);
+	return ctx->Disc->io->afread(ctx->Ifile, buf, max_size);
+}

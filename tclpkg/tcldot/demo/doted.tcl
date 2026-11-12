@@ -30,7 +30,7 @@ proc mouse_anyleave {c} {
 		-fill [lindex $saveFill 1] -stipple {}
 }
 
-# if b1 is pressed over the brackground then start a node,
+# if b1 is pressed over the background then start a node,
 # if b1 is pressed over a node then start an edge
 proc mouse_b1_press {c x y} {
 	global startObj graphtype
@@ -213,12 +213,10 @@ proc saveFileAs {type} {
 	global fileName
 
 	set cmap {{{CMAP Image Map Files} {.cmap}} {{All Files} *}}
-	set dia {{{DIA Image Files} {.dia}} {{All Files} *}}
 	set dot {{{DOT Graph Files} {.dot}} {{All Files} *}}
 	set fig {{{FIG Image Files} {.fig}} {{All Files} *}}
 	set gif {{{GIF Image Files} {.gif}} {{All Files} *}}
 	set gv  {{{GV Graph Files} {.gv}} {{All Files} *}}
-	set hpgl {{{HPGL Image Files} {.hpgl}} {{All Files} *}}
 	set jpg {{{JPG Image Files} {.jpg}} {{All Files} *}}
 	set mif {{{MIF Image Files} {.mif}} {{All Files} *}}
 	set pcl {{{PCL Image Files} {.pcl}} {{All Files} *}}
@@ -483,7 +481,7 @@ proc zoom {c fact} {
         set data(idle) [after idle "zoomupdate $c"]
 }
 
-# update all text strings after zom operation is complete
+# update all text strings after zoom operation is complete
 proc zoomupdate {c} {
         upvar #0 $c data
         # adjust fonts
@@ -658,14 +656,10 @@ menu .m.file.m
 menu .m.file.m.export
 .m.file.m.export add command -label "CMAP ..." -underline 0 \
 	-command "saveFileAs cmap"
-.m.file.m.export add command -label "DIA ..." -underline 0 \
-	-command "saveFileAs dia"
 .m.file.m.export add command -label "FIG ..." -underline 0 \
 	-command "saveFileAs fig"
 .m.file.m.export add command -label "GIF ..." -underline 0 \
 	-command "saveFileAs gif"
-.m.file.m.export add command -label "HPGL ..." -underline 0 \
-	-command "saveFileAs hpgl"
 .m.file.m.export add command -label "MIF ..." -underline 0 \
 	-command "saveFileAs mif"
 .m.file.m.export add command -label "PDF ..." -underline 0 \

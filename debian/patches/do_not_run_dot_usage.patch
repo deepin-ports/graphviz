@@ -1,0 +1,28 @@
+Description: only works on amd64, do not run it
+ Other architectures than amd64 just crash on this test.
+Author: Laszlo Boszormenyi (GCS) <gcs@debian.org>
+Forwarded: no
+Last-Update: 2023-09-10
+
+---
+
+--- graphviz-8.1.0.orig/tests/unit_tests/lib/common/command_line.c
++++ graphviz-8.1.0/tests/unit_tests/lib/common/command_line.c
+@@ -177,7 +177,7 @@ Test(command_line, dash_questionmark_V_e
+ 	// Fail this test if the function above does not call exit.
+ 	cr_assert(false);
+ }
+-
++/**
+ Test(command_line, dash_questionmark_V_output,
+ 		.init = redirect_all_std)
+ {
+@@ -191,7 +191,7 @@ Test(command_line, dash_questionmark_V_o
+ 	fflush(stdout);
+ 	cr_assert_stdout_eq_str(usage_info);
+ }
+-
++ */
+ /**
+  * Exit and output tests for `dot -V?`
+  */

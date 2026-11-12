@@ -1,6 +1,4 @@
-#ifndef STRESS_MODEL_H
-#define STRESS_MODEL_H
+#pragma once
 
-void stress_model(int dim, SparseMatrix A, SparseMatrix D, real **x, int edge_len_weighted, int maxit, real tol, int *flag);
-
-#endif
+/// @return 0 on success
+int stress_model(int dim, SparseMatrix D, double *x, int maxit);

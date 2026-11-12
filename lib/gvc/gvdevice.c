@@ -1,14 +1,11 @@
-/* $Id$ $Revision$ */
-/* vim:set shiftwidth=4 ts=8: */
-
 /*************************************************************************
  * Copyright (c) 2011 AT&T Intellectual Property 
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
- * http://www.eclipse.org/legal/epl-v10.html
+ * https://www.eclipse.org/legal/epl-v10.html
  *
- * Contributors: See CVS logs. Details at http://www.graphviz.org/
+ * Contributors: Details at https://graphviz.org
  *************************************************************************/
 
 /*
@@ -17,19 +14,23 @@
 
 #include "config.h"
 
+#include <ctype.h>
+#include <limits.h>
 #include <stdarg.h>
+#include <stdbool.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <inttypes.h>
 #include <errno.h>
-#ifdef HAVE_UNISTD_H
 #include <unistd.h>
-#endif
+#include <util/gv_fopen.h>
+#include <util/prisize_t.h>
+#include <util/xml.h>
 
 #ifdef _WIN32
 #include <fcntl.h>
 #include <io.h>
-#include "compat.h"
 #endif
 
 #ifdef HAVE_LIBZ
@@ -38,7 +39,7 @@
 #ifndef OS_CODE
 #  define OS_CODE  0x03  /* assume Unix */
 #endif
-static char z_file_header[] =
+static const unsigned char z_file_header[] =
    {0x1f, 0x8b, /*magic*/ Z_DEFLATED, 0 /*flags*/, 0,0,0,0 /*time*/, 0 /*xflags*/, OS_CODE};
 
 static z_stream z_strm;
@@ -47,77 +48,68 @@ static unsigned int dfallocated;
 static uint64_t crc;
 #endif /* HAVE_LIBZ */
 
-#include "const.h"
-#include "memory.h"
-#include "gvplugin_device.h"
-#include "gvcjob.h"
-#include "gvcint.h"
-#include "gvcproc.h"
-#include "logic.h"
-#include "gvio.h"
+#include <assert.h>
+#include <common/const.h>
+#include <gvc/gvplugin_device.h>
+#include <gvc/gvcjob.h>
+#include <gvc/gvcint.h>
+#include <gvc/gvcproc.h>
+#include <common/utils.h>
+#include <gvc/gvio.h>
+#include <util/agxbuf.h>
+#include <util/exit.h>
+#include <util/startswith.h>
 
-static const int PAGE_ALIGN = 4095;		/* align to a 4K boundary (less one), typical for Linux, Mac OS X and Windows memory allocation */
-
-static size_t gvwrite_no_z (GVJ_t * job, const char *s, size_t len)
-{
-    if (job->gvc->write_fn)   /* externally provided write dicipline */
-	return (job->gvc->write_fn)(job, (char*)s, len);
+static size_t gvwrite_no_z(GVJ_t * job, const void *s, size_t len) {
+    if (job->gvc->write_fn)   /* externally provided write discipline */
+	return job->gvc->write_fn(job, s, len);
     if (job->output_data) {
 	if (len > job->output_data_allocated - (job->output_data_position + 1)) {
 	    /* ensure enough allocation for string = null terminator */
-	    job->output_data_allocated = (job->output_data_position + len + 1 + PAGE_ALIGN) & ~PAGE_ALIGN;
+	    job->output_data_allocated = job->output_data_position + len + 1;
 	    job->output_data = realloc(job->output_data, job->output_data_allocated);
 	    if (!job->output_data) {
-                (job->common->errorfn) ("memory allocation failure\n");
-		exit(1);
+                job->common->errorfn("memory allocation failure\n");
+		graphviz_exit(1);
 	    }
 	}
 	memcpy(job->output_data + job->output_data_position, s, len);
         job->output_data_position += len;
-	job->output_data[job->output_data_position] = '\0'; /* keep null termnated */
+	job->output_data[job->output_data_position] = '\0'; /* keep null terminated */
 	return len;
     }
-    else
-	return fwrite(s, sizeof(char), len, job->output_file);
-    return 0;
+    assert(job->output_file != NULL);
+    return fwrite(s, sizeof(char), len, job->output_file);
 }
 
 static void auto_output_filename(GVJ_t *job)
 {
-    static char *buf;
-    static size_t bufsz;
-    char gidx[100];  /* large enough for '.' plus any integer */
-    char *fn, *p, *q;
-    size_t len;
+    static agxbuf buf;
+    char *fn;
 
-    if (job->graph_index)
-        sprintf(gidx, ".%d", job->graph_index + 1);
-    else
-        gidx[0] = '\0';
     if (!(fn = job->input_filename))
         fn = "noname.gv";
-    len = strlen(fn)                    /* typically "something.gv" */
-        + strlen(gidx)                  /* "", ".2", ".3", ".4", ... */
-        + 1                             /* "." */
-        + strlen(job->output_langname)  /* e.g. "png" */
-        + 1;                            /* null terminaor */
-    if (bufsz < len) {
-            bufsz = len + 10;
-            buf = realloc(buf, bufsz * sizeof(char));
-    }
-    strcpy(buf, fn);
-    strcat(buf, gidx);
-    strcat(buf, ".");
-    p = strdup(job->output_langname);
-    while ((q = strrchr(p, ':'))) {
-        strcat(buf, q+1);
-        strcat(buf, ".");
-	*q = '\0';
-    }
-    strcat(buf, p);
-    free(p);
+    agxbput(&buf, fn);
+    if (job->graph_index)
+        agxbprint(&buf, ".%d", job->graph_index + 1);
+    agxbputc(&buf, '.');
 
-    job->output_filename = buf;
+    {
+        const char *src = job->output_langname;
+        const char *src_end = src + strlen(src);
+        for (const char *q = src_end; ; --q) {
+            if (*q == ':') {
+                agxbprint(&buf, "%.*s.", (int)(src_end - q - 1), q + 1);
+                src_end = q;
+            }
+            if (q == src) {
+                agxbprint(&buf, "%.*s", (int)(src_end - src), src);
+                break;
+            }
+        }
+    }
+
+    job->output_filename = agxbuse(&buf);
 }
 
 /* gvdevice_initialize:
@@ -138,12 +130,12 @@ int gvdevice_initialize(GVJ_t * job)
         if (gvc->common.auto_outfile_names)
             auto_output_filename(job);
         if (job->output_filename) {
-            job->output_file = fopen(job->output_filename, "w");
+            job->output_file = gv_fopen(job->output_filename, "w");
             if (job->output_file == NULL) {
-		(job->common->errorfn) ("Could not open \"%s\" for writing : %s\n", 
+		job->common->errorfn("Could not open \"%s\" for writing : %s\n",
 		    job->output_filename, strerror(errno));
                 /* perror(job->output_filename); */
-                return(1);
+                return 1;
             }
         }
         else
@@ -175,13 +167,13 @@ int gvdevice_initialize(GVJ_t * job)
 	crc = crc32(0L, Z_NULL, 0);
 
 	if (deflateInit2(z, Z_DEFAULT_COMPRESSION, Z_DEFLATED, -MAX_WBITS, MAX_MEM_LEVEL, Z_DEFAULT_STRATEGY) != Z_OK) {
-	    (job->common->errorfn) ("Error initializing for deflation\n");
-	    return(1);
+	    job->common->errorfn("Error initializing for deflation\n");
+	    return 1;
 	}
 	gvwrite_no_z(job, z_file_header, sizeof(z_file_header));
 #else
-	(job->common->errorfn) ("No libz support.\n");
-	return(1);
+	job->common->errorfn("No libz support.\n");
+	return 1;
 #endif
     }
     return 0;
@@ -197,55 +189,65 @@ size_t gvwrite (GVJ_t * job, const char *s, size_t len)
     if (job->flags & GVDEVICE_COMPRESSED_FORMAT) {
 #ifdef HAVE_LIBZ
 	z_streamp z = &z_strm;
-	size_t dflen;
 
-#ifdef HAVE_DEFLATEBOUND
-	dflen = deflateBound(z, len);
-#else
-	/* deflateBound() is not available in older libz, e.g. from centos3 */
-	dflen = 2 * len  + dfallocated - z->avail_out;
-#endif
+	size_t dflen = deflateBound(z, len);
 	if (dfallocated < dflen) {
-	    dfallocated = (dflen + 1 + PAGE_ALIGN) & ~PAGE_ALIGN;
+	    dfallocated = dflen > UINT_MAX - 1 ? UINT_MAX : (unsigned)dflen + 1;
 	    df = realloc(df, dfallocated);
 	    if (! df) {
-                (job->common->errorfn) ("memory allocation failure\n");
-		exit(1);
+                job->common->errorfn("memory allocation failure\n");
+		graphviz_exit(1);
 	    }
 	}
 
-	crc = crc32(crc, (unsigned char*)s, len);
+#if ZLIB_VERNUM >= 0x1290
+	crc = crc32_z(crc, (const unsigned char*)s, len);
+#else
+	crc = crc32(crc, (const unsigned char*)s, len);
+#endif
 
-	z->next_in = (unsigned char*)s;
-	z->avail_in = len;
-	while (z->avail_in) {
+	for (size_t offset = 0; offset < len; ) {
+// Suppress Clang/GCC -Wcast-qual warnings. `next_in` is morally const.
+#ifdef __GNUC__
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wcast-qual"
+#endif
+	    z->next_in = (unsigned char *)s + offset;
+#ifdef __GNUC__
+#pragma GCC diagnostic pop
+#endif
+	    const unsigned chunk = len - offset > UINT_MAX
+	                         ? UINT_MAX : (unsigned)(len - offset);
+	    z->avail_in = chunk;
 	    z->next_out = df;
 	    z->avail_out = dfallocated;
-	    ret=deflate (z, Z_NO_FLUSH);
-	    if (ret != Z_OK) {
-                (job->common->errorfn) ("deflation problem %d\n", ret);
-	        exit(1);
+	    int r = deflate(z, Z_NO_FLUSH);
+	    if (r != Z_OK) {
+                job->common->errorfn("deflation problem %d\n", r);
+	        graphviz_exit(1);
 	    }
 
-	    if ((olen = z->next_out - df)) {
-		ret = gvwrite_no_z (job, (char*)df, olen);
+	    if ((olen = (size_t)(z->next_out - df))) {
+		ret = gvwrite_no_z(job, df, olen);
 	        if (ret != olen) {
-                    (job->common->errorfn) ("gvwrite_no_z problem %d\n", ret);
-	            exit(1);
+                    job->common->errorfn("gvwrite_no_z problem %d\n", ret);
+	            graphviz_exit(1);
 	        }
 	    }
+	    offset += chunk - z->avail_in;
 	}
 
 #else
-	(job->common->errorfn) ("No libz support.\n");
-	exit(1);
+        (void)olen;
+	job->common->errorfn("No libz support.\n");
+	graphviz_exit(1);
 #endif
     }
     else { /* uncompressed write */
 	ret = gvwrite_no_z (job, s, len);
 	if (ret != len) {
-	    (job->common->errorfn) ("gvwrite_no_z problem %d\n", len);
-	    exit(1);
+	    job->common->errorfn("gvwrite_no_z problem %d\n", len);
+	    graphviz_exit(1);
 	}
     }
     return len;
@@ -261,13 +263,6 @@ int gvferror (FILE* stream)
     return 0;
 }
 
-size_t gvfwrite (const void *ptr, size_t size, size_t nmemb, FILE *stream)
-{
-    size = sizeof(char);
-    assert(size);
-    return gvwrite((GVJ_t*)stream, ptr, nmemb);
-}
-
 int gvputs(GVJ_t * job, const char *s)
 {
     size_t len = strlen(s);
@@ -275,12 +270,34 @@ int gvputs(GVJ_t * job, const char *s)
     if (gvwrite (job, s, len) != len) {
 	return EOF;
     }
-    return +1;
+    return 1;
+}
+
+/// wrap `gvputs` to offer a `void *` first parameter
+static int gvputs_wrapper(void *state, const char *s) {
+  return gvputs(state, s);
+}
+
+int gvputs_xml(GVJ_t *job, const char *s) {
+  const xml_flags_t flags = {.dash = 1, .nbsp = 1};
+  return gv_xml_escape(s, flags, gvputs_wrapper, job);
+}
+
+void gvputs_nonascii(GVJ_t *job, const char *s) {
+  for (; *s != '\0'; ++s) {
+    if (*s == '\\') {
+      gvputs(job, "\\\\");
+    } else if (isascii((int)*s)) {
+      gvputc(job, *s);
+    } else {
+      gvprintf(job, "%03o", (unsigned)*s);
+    }
+  }
 }
 
 int gvputc(GVJ_t * job, int c)
 {
-    const char cc = c;
+    const char cc = (char)c;
 
     if (gvwrite (job, &cc, 1) != 1) {
 	return EOF;
@@ -324,7 +341,7 @@ void gvdevice_format(GVJ_t * job)
 void gvdevice_finalize(GVJ_t * job)
 {
     gvdevice_engine_t *gvde = job->device.engine;
-    boolean finalized_p = FALSE;
+    bool finalized_p = false;
 
     if (job->flags & GVDEVICE_COMPRESSED_FORMAT) {
 #ifdef HAVE_LIBZ
@@ -338,40 +355,40 @@ void gvdevice_finalize(GVJ_t * job)
 	z->next_out = df;
 	z->avail_out = dfallocated;
 	while ((ret = deflate (z, Z_FINISH)) == Z_OK && (cnt++ <= 100)) {
-	    gvwrite_no_z(job, (char*)df, z->next_out - df);
+	    gvwrite_no_z(job, df, (size_t)(z->next_out - df));
 	    z->next_out = df;
 	    z->avail_out = dfallocated;
 	}
 	if (ret != Z_STREAM_END) {
-            (job->common->errorfn) ("deflation finish problem %d cnt=%d\n", ret, cnt);
-	    exit(1);
+            job->common->errorfn("deflation finish problem %d cnt=%d\n", ret, cnt);
+	    graphviz_exit(1);
 	}
-	gvwrite_no_z(job, (char*)df, z->next_out - df);
+	gvwrite_no_z(job, df, (size_t)(z->next_out - df));
 
 	ret = deflateEnd(z);
 	if (ret != Z_OK) {
-	    (job->common->errorfn) ("deflation end problem %d\n", ret);
-	    exit(1);
+	    job->common->errorfn("deflation end problem %d\n", ret);
+	    graphviz_exit(1);
 	}
-	out[0] = crc;
-	out[1] = crc >> 8;
-	out[2] = crc >> 16;
-	out[3] = crc >> 24;
-	out[4] = z->total_in;
-	out[5] = z->total_in >> 8;
-	out[6] = z->total_in >> 16;
-	out[7] = z->total_in >> 24;
-	gvwrite_no_z(job, (char*)out, sizeof(out));
+	out[0] = (unsigned char)crc;
+	out[1] = (unsigned char)(crc >> 8);
+	out[2] = (unsigned char)(crc >> 16);
+	out[3] = (unsigned char)(crc >> 24);
+	out[4] = (unsigned char)z->total_in;
+	out[5] = (unsigned char)(z->total_in >> 8);
+	out[6] = (unsigned char)(z->total_in >> 16);
+	out[7] = (unsigned char)(z->total_in >> 24);
+	gvwrite_no_z(job, out, sizeof(out));
 #else
-	(job->common->errorfn) ("No libz support\n");
-	exit(1);
+	job->common->errorfn("No libz support\n");
+	graphviz_exit(1);
 #endif
     }
 
     if (gvde) {
 	if (gvde->finalize) {
 	    gvde->finalize(job);
-	    finalized_p = TRUE;
+	    finalized_p = true;
 	}
     }
 
@@ -381,43 +398,23 @@ void gvdevice_finalize(GVJ_t * job)
 	gvdevice_close(job);
     }
 }
-/* gvprintf:
- * Unless vsnprintf is available, this function is unsafe due to the fixed buffer size.
- * It should only be used when the caller is sure the input will not
- * overflow the buffer. In particular, it should be avoided for
- * input coming from users.
- */
+
 void gvprintf(GVJ_t * job, const char *format, ...)
 {
-    char buf[BUFSIZ];
-    int len;
+    agxbuf buf = {0};
     va_list argp;
-    char* bp = buf;
 
     va_start(argp, format);
-#ifdef HAVE_VSNPRINTF
-    len = vsnprintf((char *)buf, BUFSIZ, format, argp);
+    int len = vagxbprint(&buf, format, argp);
     if (len < 0) {
-	agerr (AGERR, "gvprintf: %s\n", strerror(errno));
+	va_end(argp);
+	agerrorf("gvprintf: %s\n", strerror(errno));
 	return;
     }
-    else if (len >= BUFSIZ) {
-    /* C99 vsnprintf returns the length that would be required
-     * to write the string without truncation. 
-     */
-	bp = gmalloc(len + 1);
-	va_end(argp);
-	va_start(argp, format);
-	len = vsprintf(bp, format, argp);
-    }
-#else
-    len = vsprintf((char *)buf, format, argp);
-#endif
     va_end(argp);
 
-    gvwrite(job, bp, len);
-    if (bp != buf)
-	free (bp);
+    gvwrite(job, agxbuse(&buf), (size_t)len);
+    agxbfree(&buf);
 }
 
 
@@ -425,87 +422,46 @@ void gvprintf(GVJ_t * job, const char *format, ...)
  *	cc -DGVPRINTNUM_TEST gvprintnum.c -o gvprintnum
  */
 
-#define DECPLACES 4
-#define DECPLACES_SCALE 10000
-
 /* use macro so maxnegnum is stated just once for both double and string versions */
 #define val_str(n, x) static double n = x; static char n##str[] = #x;
 val_str(maxnegnum, -999999999999999.99)
 
-/* we use len and don't need the string to be terminated */
-/* #define TERMINATED_NUMBER_STRING */
-
-/* Note.  Returned string is only good until the next call to gvprintnum */
-static char * gvprintnum (size_t *len, double number)
-{
-    static char tmpbuf[sizeof(maxnegnumstr)];   /* buffer big enough for worst case */
-    char *result = tmpbuf+sizeof(maxnegnumstr); /* init result to end of tmpbuf */
-    long int N;
-    boolean showzeros, negative;
-    int digit, i;
-
+static void gvprintnum(agxbuf *xb, double number) {
     /*
         number limited to a working range: maxnegnum >= n >= -maxnegnum
-	N = number * DECPLACES_SCALE rounded towards zero,
-	printing to buffer in reverse direction,
-	printing "." after DECPLACES
 	suppressing trailing "0" and "."
      */
 
     if (number < maxnegnum) {		/* -ve limit */
-	*len = sizeof(maxnegnumstr)-1;  /* len doesn't include terminator */
-	return maxnegnumstr;;
+	agxbput(xb, maxnegnumstr);
+	return;
     }
     if (number > -maxnegnum) {		/* +ve limit */
-	*len = sizeof(maxnegnumstr)-2;  /* len doesn't include terminator or sign */
-	return maxnegnumstr+1;		/* +1 to skip the '-' sign */
+	agxbput(xb, maxnegnumstr + 1); // +1 to skip the '-' sign
+	return;
     }
-    number *= DECPLACES_SCALE;		/* scale by DECPLACES_SCALE */
-    if (number < 0.0)			/* round towards zero */
-        N = number - 0.5;
-    else
-        N = number + 0.5;
-    if (N == 0) {			/* special case for exactly 0 */
-	*len = 1;
-	return "0";
-    }
-    if ((negative = (N < 0)))		/* avoid "-0" by testing rounded int */
-        N = -N;				/* make number +ve */
-#ifdef TERMINATED_NUMBER_STRING
-    *--result = '\0';			/* terminate the result string */
-#endif
-    showzeros = FALSE;			/* don't print trailing zeros */
-    for (i = DECPLACES; N || i > 0; i--) {  /* non zero remainder,
-						or still in fractional part */
-        digit = N % 10;			/* next least-significant digit */
-        N /= 10;
-        if (digit || showzeros) {	/* if digit is non-zero,
-						or if we are printing zeros */
-            *--result = digit | '0';	/* convert digit to ascii */
-            showzeros = TRUE;		/* from now on we must print zeros */
+
+    agxbprint(xb, "%.03f", number);
+    agxbuf_trim_zeros(xb);
+
+    // strip off unnecessary leading '0'
+    {
+        char *staging = agxbdisown(xb);
+        if (startswith(staging, "0.")) {
+            memmove(staging, &staging[1], strlen(staging));
+        } else if (startswith(staging, "-0.")) {
+            memmove(&staging[1], &staging[2], strlen(&staging[1]));
         }
-        if (i == 1) {			/* if completed fractional part */
-            if (showzeros)		/* if there was a non-zero fraction */
-                *--result = '.';	/* print decimal point */
-            showzeros = TRUE;		/* print all digits in int part */
-        }
+        agxbput(xb, staging);
+        free(staging);
     }
-    if (negative)			/* print "-" if needed */
-        *--result = '-';
-#ifdef TERMINATED_NUMBER_STRING
-    *len = tmpbuf+sizeof(maxnegnumstr)-1 - result;
-#else
-    *len = tmpbuf+sizeof(maxnegnumstr) - result;
-#endif
-    return result;				
 }
 
 
 #ifdef GVPRINTNUM_TEST
 int main (int argc, char *argv[])
 {
-    char *buf;
-    size_t len;
+    agxbuf xb = {0};
 
     double test[] = {
 	-maxnegnum*1.1, -maxnegnum*.9,
@@ -519,78 +475,77 @@ int main (int argc, char *argv[])
     int i = sizeof(test) / sizeof(test[0]);
 
     while (i--) {
-	buf = gvprintnum(&len, test[i]);
-        fprintf (stdout, "%g = %s %d\n", test[i], buf, len);
+	gvprintnum(&xb, test[i]);
+	const char *buf = agxbuse(&xb);
+	const size_t len = strlen(buf);
+        printf("%g = %s %" PRISIZE_T "\n", test[i], buf, len);
     }
 
-    return 0;
+    agxbfree(&xb);
+    graphviz_exit(0);
 }
 #endif
 
 /* gv_trim_zeros
-* Trailing zeros are removed and decimal point, if possible.
-* Add trailing space if addSpace is non-zero.
+* Identify Trailing zeros and decimal point, if possible.
+* Assumes the input is the result of %.02f printing.
 */
-static void gv_trim_zeros(char* buf, int addSpace)
-{
-    char* dotp;
-    char* p;
+static size_t gv_trim_zeros(const char *buf) {
+  char *dotp = strchr(buf, '.');
+  if (dotp == NULL) {
+    return strlen(buf);
+  }
 
-    if ((dotp = strchr(buf, '.'))) {
-        p = dotp + 1;
-        while (*p) p++;  // find end of string
-        p--;
-        while (*p == '0') *p-- = '\0';
-        if (*p == '.')        // If all decimals were zeros, remove ".".
-            *p = '\0';
-        else
-            p++;
-    }
-    else if (addSpace)
-        p = buf + strlen(buf);
+  // check this really is the result of %.02f printing
+  assert(isdigit((int)dotp[1]) && isdigit((int)dotp[2]) && dotp[3] == '\0');
 
-    if (addSpace) { /* p points to null byte */
-        *p++ = ' ';
-        *p = '\0';
+  if (dotp[2] == '0') {
+    if (dotp[1] == '0') {
+      return (size_t)(dotp - buf);
+    } else {
+      return (size_t)(dotp - buf) + 2;
     }
+  }
+
+  return strlen(buf);
 }
 
 void gvprintdouble(GVJ_t * job, double num)
 {
     // Prevents values like -0
-    if (num > -0.00000001 && num < 0.00000001)
+    if (num > -0.005 && num < 0.005)
     {
-        num = 0;
+        gvwrite(job, "0", 1);
+        return;
     }
 
     char buf[50];
 
     snprintf(buf, 50, "%.02f", num);
-    gv_trim_zeros(buf, 0);
+    size_t len = gv_trim_zeros(buf);
 
-    gvwrite(job, buf, strlen(buf));
+    gvwrite(job, buf, len);
 }
 
 void gvprintpointf(GVJ_t * job, pointf p)
 {
-    char *buf;
-    size_t len;
+    agxbuf xb = {0};
 
-    buf = gvprintnum(&len, p.x);
-    gvwrite(job, buf, len);
+    gvprintnum(&xb, p.x);
+    const char *buf = agxbuse(&xb);
+    gvwrite(job, buf, strlen(buf));
     gvwrite(job, " ", 1);
-    buf = gvprintnum(&len, p.y);
-    gvwrite(job, buf, len);
+    gvprintnum(&xb, p.y);
+    buf = agxbuse(&xb);
+    gvwrite(job, buf, strlen(buf));
+    agxbfree(&xb);
 } 
 
-void gvprintpointflist(GVJ_t * job, pointf *p, int n)
-{
-    int i = 0;
-
-    while (TRUE) {
-	gvprintpointf(job, p[i]);
-        if (++i >= n) break;
-        gvwrite(job, " ", 1);
-    }
+void gvprintpointflist(GVJ_t *job, pointf *p, size_t n) {
+  const char *separator = "";
+  for (size_t i = 0; i < n; ++i) {
+    gvputs(job, separator);
+    gvprintpointf(job, p[i]);
+    separator = " ";
+  }
 } 
-

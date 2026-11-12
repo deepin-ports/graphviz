@@ -1,0 +1,4 @@
+usr/lib/tcltk/${DEB_HOST_MULTIARCH}/gv/*
+usr/share/man/man3/gv.3tcl
+usr/share/man/man3/gdtclft.3tcl
+usr/share/man/man3/tcldot.3tcl

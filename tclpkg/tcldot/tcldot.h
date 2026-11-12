@@ -1,44 +1,23 @@
-/* $Id$ $Revision$ */
-/* vim:set shiftwidth=4 ts=8: */
-
 /*************************************************************************
  * Copyright (c) 2011 AT&T Intellectual Property 
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
- * http://www.eclipse.org/legal/epl-v10.html
+ * https://www.eclipse.org/legal/epl-v10.html
  *
- * Contributors: See CVS logs. Details at http://www.graphviz.org/
+ * Contributors: Details at https://graphviz.org
  *************************************************************************/
 
-
-/* avoid compiler warnings with template changes in Tcl8.4 */
-/*    specifically just the change to Tcl_CmdProc */
-#define USE_NON_CONST
+#include "../tcl-compat.h"
 #include <tcl.h>
-#include "render.h"
-#include "gvc.h"
-#include "gvio.h"
-#include "tclhandle.h"
-
-#ifndef CONST84
-#define CONST84
+#ifdef EXTERN
+// tcl.h defines `EXTERN` which interferes with the `EXTERN` in globals.h
+#undef EXTERN
 #endif
-
-/* ******* not ready yet
-#if (TCL_MAJOR_VERSION > 7)
-#define TCLOBJ
-#if (TCL_MAJOR_VERSION == 8) && (TCL_MINOR_VERSION == 0)
-char *
-Tcl_GetString(Tcl_Obj *obj) {
-    int len;
-	return (Tcl_GetStringFromObj(obj, &len));
-}
-#else
-#define UTF8
-#endif
-#endif
-********* */
+#include <common/render.h>
+#include <gvc/gvc.h>
+#include <gvc/gvio.h>
+#include "../../plugin/core/tcl_context.h"
 
 /*
  * ictx - one per tcl interpreter, may support multiple graph namespaces
@@ -57,50 +36,23 @@ typedef struct {
 typedef struct {
     Agraph_t *g;        /* the graph */
     ictx_t *ictx;
-    uint64_t idx; 
 } gctx_t;
 
-#if HAVE_LIBGD
+#ifdef HAVE_LIBGD
 extern void *GDHandleTable;
 extern int Gdtclft_Init(Tcl_Interp *);
 #endif
 
-extern int graphcmd(ClientData clientData, Tcl_Interp * interp,
-#ifndef TCLOBJ
-		    int argc, char *argv[]
-#else
-		    int argc, Tcl_Obj * CONST objv[]
-#endif
-    );
-extern int nodecmd(ClientData clientData, Tcl_Interp * interp,
-#ifndef TCLOBJ
-		    int argc, char *argv[]
-#else
-		    int argc, Tcl_Obj * CONST objv[]
-#endif
-    );
-extern int edgecmd(ClientData clientData, Tcl_Interp * interp,
-#ifndef TCLOBJ
-		    int argc, char *argv[]
-#else
-		    int argc, Tcl_Obj * CONST objv[]
-#endif
-    );
-
-/* rdr_t isn't exposed by cgraph/io.c */
-typedef struct {
-    const char *data;
-    int len;
-    int cur;
-} rdr_t;
+extern int graphcmd(ClientData clientData, Tcl_Interp * interp, int argc, const char *argv[]);
+extern int nodecmd(ClientData clientData, Tcl_Interp * interp, int argc, const char *argv[]);
+extern int edgecmd(ClientData clientData, Tcl_Interp * interp, int argc, const char *argv[]);
 
 extern int myiodisc_afread(void* channel, char *ubuf, int n);
 extern int myiodisc_memiofread(void *chan, char *buf, int bufsize);
 extern Agiddisc_t myiddisc;
-extern Agraph_t *agread_usergets (ictx_t *ictx, FILE * fp, int (*usergets)(void *chan, char *buf, int bufsize));
-extern Agraph_t *cmd2g(char *cmd);
-extern Agnode_t *cmd2n(char *cmd);
-extern Agedge_t *cmd2e(char *cmd);
+extern Agraph_t *cmd2g(const char *cmd);
+extern Agnode_t *cmd2n(const char *cmd);
+extern Agedge_t *cmd2e(const char *cmd);
 extern char *obj2cmd(void *obj);
 extern void deleteEdge(gctx_t *gctx, Agraph_t * g, Agedge_t * e);
 extern void deleteNode(gctx_t *gctx, Agraph_t * g, Agnode_t * n);
@@ -109,19 +61,16 @@ extern void listGraphAttrs (Tcl_Interp * interp, Agraph_t* g);
 extern void listNodeAttrs (Tcl_Interp * interp, Agraph_t* g);
 extern void listEdgeAttrs (Tcl_Interp * interp, Agraph_t* g);
 
-extern void setgraphattributes(Agraph_t * g, char *argv[], int argc);
-extern void setedgeattributes(Agraph_t * g, Agedge_t * e, char *argv[], int argc);
-extern void setnodeattributes(Agraph_t * g, Agnode_t * n, char *argv[], int argc);
+void setgraphattributes(Agraph_t *g, char *argv[], Tcl_Size argc);
+void setedgeattributes(Agraph_t *g, Agedge_t *e, char *argv[], Tcl_Size argc);
+void setnodeattributes(Agraph_t *g, Agnode_t *n, char *argv[], Tcl_Size argc);
 
 extern size_t Tcldot_string_writer(GVJ_t *job, const char *s, size_t len);
 extern size_t Tcldot_channel_writer(GVJ_t *job, const char *s, size_t len);
 
-extern void tcldot_layout(GVC_t *gvc, Agraph_t * g, char *engine);
+extern void tcldot_layout(GVC_t *gvc, Agraph_t * g, const char *engine);
 
-/* Check whether string str corresponds to option opname.
- * opname: literal string.
- * str: the string to check.
- * str0: first character of str.
- * strn: length of str. */
-#define MATCHES_OPTION(opname, str, str0, strn) \
-	(opname[0] == str0) && (sizeof(opname)-1 == strn) && (strncmp(opname, str, sizeof(opname)) == 0)
+/// duplicate the strings pointed to by `argv` as non-const strings
+char **tcldot_argv_dup(Tcl_Size argc, const char *argv[]);
+/// free the strings pointed to by `argv`
+void tcldot_argv_free(Tcl_Size argc, char *argv[]);

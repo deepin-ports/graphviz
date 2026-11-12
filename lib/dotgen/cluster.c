@@ -1,25 +1,27 @@
-/* $Id$ $Revision$ */
-/* vim:set shiftwidth=4 ts=8: */
-
 /*************************************************************************
  * Copyright (c) 2011 AT&T Intellectual Property 
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
- * http://www.eclipse.org/legal/epl-v10.html
+ * https://www.eclipse.org/legal/epl-v10.html
  *
- * Contributors: See CVS logs. Details at http://www.graphviz.org/
+ * Contributors: Details at https://graphviz.org
  *************************************************************************/
 
+#include "config.h"
 
-#include "dot.h"
+#include <assert.h>
+#include <dotgen/dot.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <util/alloc.h>
 
 static node_t*
 map_interclust_node(node_t * n)
 {
     node_t *rv;
 
-    if ((ND_clust(n) == NULL) || (  GD_expanded(ND_clust(n))) )
+    if (ND_clust(n) == NULL || GD_expanded(ND_clust(n)))
 	rv = n;
     else
 	rv = GD_rankleader(ND_clust(n))[ND_rank(n)];
@@ -57,12 +59,9 @@ make_slots(graph_t * root, int r, int pos, int d)
 static node_t* 
 clone_vn(graph_t * g, node_t * vn)
 {
-    node_t *rv;
-    int r;
-
-    r = ND_rank(vn);
+    const int r = ND_rank(vn);
     make_slots(g, r, ND_order(vn), 2);
-    rv = virtual_node(g);
+    node_t *const rv = virtual_node(g);
     ND_lw(rv) = ND_lw(vn);
     ND_rw(rv) = ND_rw(vn);
     ND_rank(rv) = ND_rank(vn);
@@ -80,16 +79,15 @@ map_path(node_t * from, node_t * to, edge_t * orig, edge_t * ve, int type)
 
     assert(ND_rank(from) < ND_rank(to));
 
-    if ((agtail(ve) == from) && (aghead(ve) == to))
+    if (agtail(ve) == from && aghead(ve) == to)
 	return;
 
     if (ED_count(ve) > 1) {
 	ED_to_virt(orig) = NULL;
 	if (ND_rank(to) - ND_rank(from) == 1) {
-	    if ((e = find_fast_edge(from, to)) && (ports_eq(orig, e))) {
+	    if ((e = find_fast_edge(from, to)) && ports_eq(orig, e)) {
 		merge_oneway(orig, e);
-		if ((ND_node_type(from) == NORMAL)
-		    && (ND_node_type(to) == NORMAL))
+		if (ND_node_type(from) == NORMAL && ND_node_type(to) == NORMAL)
 		    other_edge(orig);
 		return;
 	    }
@@ -108,13 +106,12 @@ map_path(node_t * from, node_t * to, edge_t * orig, edge_t * ve, int type)
 	}
     } else {
 	if (ND_rank(to) - ND_rank(from) == 1) {
-	    if ((ve = find_fast_edge(from, to)) && (ports_eq(orig, ve))) {
+	    if ((ve = find_fast_edge(from, to)) && ports_eq(orig, ve)) {
 		/*ED_to_orig(ve) = orig; */
 		ED_to_virt(orig) = ve;
 		ED_edge_type(ve) = type;
 		ED_count(ve)++;
-		if ((ND_node_type(from) == NORMAL)
-		    && (ND_node_type(to) == NORMAL))
+		if (ND_node_type(from) == NORMAL && ND_node_type(to) == NORMAL)
 		    other_edge(orig);
 	    } else {
 		ED_to_virt(orig) = NULL;
@@ -123,7 +120,6 @@ map_path(node_t * from, node_t * to, edge_t * orig, edge_t * ve, int type)
 	    }
 	}
 	if (ND_rank(to) - ND_rank(from) > 1) {
-	    e = ve;
 	    if (agtail(ve) != from) {
 		ED_to_virt(orig) = NULL;
 		e = ED_to_virt(orig) = virtual_edge(from, aghead(ve), orig);
@@ -142,15 +138,13 @@ map_path(node_t * from, node_t * to, edge_t * orig, edge_t * ve, int type)
     }
 }
 
-static void 
-make_interclust_chain(graph_t * g, node_t * from, node_t * to, edge_t * orig)
-{
+static void make_interclust_chain(node_t * from, node_t * to, edge_t * orig) {
     int newtype;
     node_t *u, *v;
 
     u = map_interclust_node(from);
     v = map_interclust_node(to);
-    if ((u == from) && (v == to))
+    if (u == from && v == to)
 	newtype = VIRTUAL;
     else
 	newtype = CLUSTER_EDGE;
@@ -161,18 +155,16 @@ make_interclust_chain(graph_t * g, node_t * from, node_t * to, edge_t * orig)
  * attach and install edges between clusters.
  * essentially, class2() for interclust edges.
  */
-void interclexp(graph_t * subg)
+static void interclexp(graph_t * subg)
 {
-    graph_t *g;
-    node_t *n;
-    edge_t *e, *prev, *next;
+    edge_t *next;
 
-    g = dot_root(subg);
-    for (n = agfstnode(subg); n; n = agnxtnode(subg, n)) {
+    graph_t *const g = dot_root(subg);
+    for (node_t *n = agfstnode(subg); n; n = agnxtnode(subg, n)) {
 
 	/* N.B. n may be in a sub-cluster of subg */
-	prev = NULL;
-	for (e = agfstedge(g, n); e; e = next) {
+	edge_t *prev = NULL;
+	for (edge_t *e = agfstedge(g, n); e; e = next) {
 	    next = agnxtedge(g, e, n);
 	    if (agcontains(subg, e))
 		continue;
@@ -187,7 +179,8 @@ void interclexp(graph_t * subg)
 		    ED_to_virt(e) = NULL;
 		if (ED_to_virt(prev) == NULL)
 		    continue;	/* internal edge */
-		merge_chain(subg, e, ED_to_virt(prev), FALSE);
+		ED_to_virt(e) = NULL;
+		merge_chain(subg, e, ED_to_virt(prev), false);
 		safe_other_edge(e);
 		continue;
 	    }
@@ -196,7 +189,9 @@ void interclexp(graph_t * subg)
 	    if (ND_rank(agtail(e)) == ND_rank(aghead(e))) {
 		edge_t* fe;
 		if ((fe = find_flat_edge(agtail(e), aghead(e))) == NULL) {
-		    flat_edge(g, e);
+		    if (!ED_to_virt(e)) {
+		        flat_edge(g, e);
+		    }
 		    prev = e;
 		} else if (e != fe) {
 		    safe_other_edge(e);
@@ -207,21 +202,14 @@ void interclexp(graph_t * subg)
 
 	    /* forward edges */
 	    if (ND_rank(aghead(e)) > ND_rank(agtail(e))) {
-		make_interclust_chain(g, agtail(e), aghead(e), e);
+		make_interclust_chain(agtail(e), aghead(e), e);
 		prev = e;
 		continue;
 	    }
 
 	    /* backward edges */
-	    else {
-/*
-I think that make_interclust_chain should create call other_edge(e) anyway 
-				if (agcontains(subg,agtail(e))
-					&& agfindedge(g,aghead(e),agtail(e))) other_edge(e);
-*/
-		make_interclust_chain(g, aghead(e), agtail(e), e);
-		prev = e;
-	    }
+	    make_interclust_chain(aghead(e), agtail(e), e);
+	    prev = e;
 	}
     }
 }
@@ -233,9 +221,11 @@ merge_ranks(graph_t * subg)
     node_t *v;
     graph_t *root;
 
+    assert(GD_minrank(subg) <= GD_maxrank(subg) && "corrupted rank bounds");
+
     root = dot_root(subg);
     if (GD_minrank(subg) > 0)
-	GD_rank(root)[GD_minrank(subg) - 1].valid = FALSE;
+	GD_rank(root)[GD_minrank(subg) - 1].valid = false;
     for (r = GD_minrank(subg); r <= GD_maxrank(subg); r++) {
 	d = GD_rank(subg)[r].n;
 	ipos = pos = ND_order(GD_rankleader(subg)[r]);
@@ -248,14 +238,13 @@ merge_ranks(graph_t * subg)
 		v->root = agroot(root);
 	    delete_fast_node(subg, v);
 	    fast_node(root, v);
-	    GD_n_nodes(root)++;
 	}
 	GD_rank(subg)[r].v = GD_rank(root)[r].v + ipos;
-	GD_rank(root)[r].valid = FALSE;
+	GD_rank(root)[r].valid = false;
     }
     if (r < GD_maxrank(root))
-	GD_rank(root)[r].valid = FALSE;
-    GD_expanded(subg) = TRUE;
+	GD_rank(root)[r].valid = false;
+    GD_expanded(subg) = true;
 }
 
 static void 
@@ -269,29 +258,41 @@ remove_rankleaders(graph_t * g)
 	v = GD_rankleader(g)[r];
 
 	/* remove the entire chain */
-	while ((e = ND_out(v).list[0]))
+	while ((e = ND_out(v).list[0])) {
 	    delete_fast_edge(e);
-	while ((e = ND_in(v).list[0]))
+	    free(e->base.data);
+	    free(e);
+	}
+	while ((e = ND_in(v).list[0])) {
 	    delete_fast_edge(e);
+	    free(e);
+	}
 	delete_fast_node(dot_root(g), v);
+	free(ND_in(v).list);
+	free(ND_out(v).list);
+	free(v->base.data);
+	free(v);
 	GD_rankleader(g)[r] = NULL;
     }
 }
 
 /* delete virtual nodes of a cluster, and install real nodes or sub-clusters */
-void expand_cluster(graph_t * subg)
-{
+int expand_cluster(graph_t *subg) {
     /* build internal structure of the cluster */
     class2(subg);
     GD_comp(subg).size = 1;
     GD_comp(subg).list[0] = GD_nlist(subg);
     allocate_ranks(subg);
-    build_ranks(subg, 0);
+    const int rc = build_ranks(subg, 0);
+    if (rc != 0) {
+        return rc;
+    }
     merge_ranks(subg);
 
     /* build external structure of the cluster */
     interclexp(subg);
     remove_rankleaders(subg);
+    return 0;
 }
 
 /* this function marks every node in <g> with its top-level cluster under <g> */
@@ -314,7 +315,7 @@ void mark_clusters(graph_t * g)
 	for (n = agfstnode(clust); n; n = nn) {
 		nn = agnxtnode(clust,n);
 	    if (ND_ranktype(n) != NORMAL) {
-		agerr(AGWARN,
+		agwarningf(
 		      "%s was already in a rankset, deleted from cluster %s\n",
 		      agnameof(n), agnameof(g));
 		agdelete(clust,n);
@@ -346,7 +347,7 @@ void build_skeleton(graph_t * g, graph_t * subg)
     edge_t *e;
 
     prev = NULL;
-    GD_rankleader(subg) = N_NEW(GD_maxrank(subg) + 2, node_t *);
+    GD_rankleader(subg) = gv_calloc(GD_maxrank(subg) + 2, sizeof(node_t*));
     for (r = GD_minrank(subg); r <= GD_maxrank(subg); r++) {
 	v = GD_rankleader(subg)[r] = virtual_node(g);
 	ND_rank(v) = r;
@@ -376,19 +377,23 @@ void build_skeleton(graph_t * g, graph_t * subg)
     }
 }
 
-void install_cluster(graph_t * g, node_t * n, int pass, nodequeue * q)
-{
+int install_cluster(graph_t *g, node_t *n, int pass, node_queue_t *q) {
     int r;
     graph_t *clust;
 
     clust = ND_clust(n);
     if (GD_installed(clust) != pass + 1) {
-	for (r = GD_minrank(clust); r <= GD_maxrank(clust); r++)
-	    install_in_rank(g, GD_rankleader(clust)[r]);
+	for (r = GD_minrank(clust); r <= GD_maxrank(clust); r++) {
+	    const int rc = install_in_rank(g, GD_rankleader(clust)[r]);
+	    if (rc != 0) {
+	        return rc;
+	    }
+	}
 	for (r = GD_minrank(clust); r <= GD_maxrank(clust); r++)
 	    enqueue_neighbors(q, GD_rankleader(clust)[r], pass);
 	GD_installed(clust) = pass + 1;
     }
+    return 0;
 }
 
 static void mark_lowcluster_basic(Agraph_t * g);
@@ -402,7 +407,7 @@ void mark_lowclusters(Agraph_t * root)
 	ND_clust(n) = NULL;
 	for (orig = agfstout(root, n); orig; orig = agnxtout(root, orig)) {
 	    if ((e = ED_to_virt(orig))) {
-		while (e && (ND_node_type(vn = aghead(e))) == VIRTUAL) {
+		while (e && ND_node_type(vn = aghead(e)) == VIRTUAL) {
 		    ND_clust(vn) = NULL;
 		    e = ND_out(aghead(e)).list[0];
 		}
@@ -431,7 +436,7 @@ static void mark_lowcluster_basic(Agraph_t * g)
 	    ND_clust(n) = g;
 	for (orig = agfstout(g, n); orig; orig = agnxtout(g, orig)) {
 	    if ((e = ED_to_virt(orig))) {
-		while (e && (ND_node_type(vn = aghead(e))) == VIRTUAL) {
+		while (e && ND_node_type(vn = aghead(e)) == VIRTUAL) {
 		    if (ND_clust(vn) == NULL)
 			ND_clust(vn) = g;
 		    e = ND_out(aghead(e)).list[0];

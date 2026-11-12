@@ -1,33 +1,41 @@
-/* $Id$Revision: */
-/* vim:set shiftwidth=4 ts=8: */
-
 /*************************************************************************
  * Copyright (c) 2011 AT&T Intellectual Property 
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
- * http://www.eclipse.org/legal/epl-v10.html
+ * https://www.eclipse.org/legal/epl-v10.html
  *
- * Contributors: See CVS logs. Details at http://www.graphviz.org/
+ * Contributors: Details at https://graphviz.org
  *************************************************************************/
 
-#include <multispline.h>
-#include <delaunay.h>
-#include <neatoprocs.h>
+#include "config.h"
+
+#include <assert.h>
+#include <float.h>
+#include <limits.h>
+#include <neatogen/multispline.h>
+#include <neatogen/delaunay.h>
+#include <neatogen/neatoprocs.h>
 #include <math.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <util/alloc.h>
+#include <util/gv_math.h>
 
-
-static boolean spline_merge(node_t * n)
+static bool spline_merge(node_t * n)
 {
-    return FALSE;
+    (void)n;
+    return false;
 }
 
-static boolean swap_ends_p(edge_t * e)
+static bool swap_ends_p(edge_t * e)
 {
-    return FALSE;
+    (void)e;
+    return false;
 }
 
-static splineInfo sinfo = { swap_ends_p, spline_merge };
+static splineInfo sinfo = {.swapEnds = swap_ends_p,
+                           .splineMerge = spline_merge};
 
 typedef struct {
     int i, j;
@@ -54,30 +62,21 @@ typedef struct {
     int t;
 } item;
 
-static int cmpItem(Dt_t * d, int p1[], int p2[], Dtdisc_t * disc)
-{
-    NOTUSED(d);
-    NOTUSED(disc);
-
-    if (p1[0] < p2[0])
-	return -1;
-    else if (p1[0] > p2[0])
-	return 1;
-    else if (p1[1] < p2[1])
-	return -1;
-    else if (p1[1] > p2[1])
-	return 1;
-    else
-	return 0;
+static int cmpItem(void *item1, void *item2) {
+    const int *p1 = item1;
+    const int *p2 = item2;
+    if (p1[0] < p2[0]) return -1;
+    if (p1[0] > p2[0]) return 1;
+    if (p1[1] < p2[1]) return -1;
+    if (p1[1] > p2[1]) return 1;
+    return 0;
 }
 
-/* newItem:
- */
-static void *newItem(Dt_t * d, item * objp, Dtdisc_t * disc)
-{
-    item *newp = NEW(item);
+static void *newItem(void *p, Dtdisc_t *disc) {
+    item *objp = p;
+    item *newp = gv_alloc(sizeof(item));
 
-    NOTUSED(disc);
+    (void)disc;
     newp->a[0] = objp->a[0];
     newp->a[1] = objp->a[1];
     newp->t = objp->t;
@@ -85,31 +84,20 @@ static void *newItem(Dt_t * d, item * objp, Dtdisc_t * disc)
     return newp;
 }
 
-static void freeItem(Dt_t * d, item * obj, Dtdisc_t * disc)
-{
-    free(obj);
-}
-
 static Dtdisc_t itemdisc = {
-    offsetof(item, a),
-    2 * sizeof(int),
-    offsetof(item, link),
-    (Dtmake_f) newItem,
-    (Dtfree_f) freeItem,
-    (Dtcompar_f) cmpItem,
-    NIL(Dthash_f),
-    NIL(Dtmemory_f),
-    NIL(Dtevent_f)
+    .key = offsetof(item, a),
+    .size = 2 * sizeof(int),
+    .link = offsetof(item, link),
+    .makef = newItem,
+    .freef = free,
+    .comparf = cmpItem,
 };
 
 static void addMap(Dt_t * map, int a, int b, int t)
 {
     item it;
-    int tmp;
     if (a > b) {
-	tmp = a;
-	a = b;
-	b = tmp;
+	SWAP(&a, &b);
     }
     it.a[0] = a;
     it.a[1] = b;
@@ -117,8 +105,7 @@ static void addMap(Dt_t * map, int a, int b, int t)
     dtinsert(map, &it);
 }
 
-/* mapSegToTri:
- * Create mapping from indices of side endpoints to triangle id 
+/* Create mapping from indices of side endpoints to triangle id 
  * We use a set rather than a bag because the segments used for lookup
  * will always be a side of a polygon and hence have a unique triangle.
  */
@@ -143,13 +130,11 @@ static int findMap(Dt_t * map, int a, int b)
     item it;
     item *ip;
     if (a > b) {
-	int tmp = a;
-	a = b;
-	b = tmp;
+	SWAP(&a, &b);
     }
     it.a[0] = a;
     it.a[1] = b;
-    ip = (item *) dtsearch(map, &it);
+    ip = dtsearch(map, &it);
     assert(ip);
     return ip->t;
 }
@@ -164,40 +149,36 @@ typedef struct {
     int j;
 } Ipair;
 
-static int cmpIpair(Dt_t * d, int *p1, int *p2, Dtdisc_t * disc)
-{
-    NOTUSED(d);
-    NOTUSED(disc);
-
-    return (*p1 - *p2);
+static int cmpIpair(void *pair1, void *pair2) {
+    const int *p1 = pair1;
+    const int *p2 = pair2;
+    if (*p1 < *p2) {
+        return -1;
+    }
+    if (*p1 > *p2) {
+        return 1;
+    }
+    return 0;
 }
 
-static void *newIpair(Dt_t * d, Ipair * objp, Dtdisc_t * disc)
-{
-    Ipair *newp = NEW(Ipair);
+static void *newIpair(void *p, Dtdisc_t *disc) {
+    Ipair *objp = p;
+    Ipair *newp = gv_alloc(sizeof(Ipair));
 
-    NOTUSED(disc);
+    (void)disc;
     newp->i = objp->i;
     newp->j = objp->j;
 
     return newp;
 }
 
-static void freeIpair(Dt_t * d, Ipair * obj, Dtdisc_t * disc)
-{
-    free(obj);
-}
-
 static Dtdisc_t ipairdisc = {
-    offsetof(Ipair, i),
-    sizeof(int),
-    offsetof(Ipair, link),
-    (Dtmake_f) newIpair,
-    (Dtfree_f) freeIpair,
-    (Dtcompar_f) cmpIpair,
-    NIL(Dthash_f),
-    NIL(Dtmemory_f),
-    NIL(Dtevent_f)
+    .key = offsetof(Ipair, i),
+    .size = sizeof(int),
+    .link = offsetof(Ipair, link),
+    .makef = newIpair,
+    .freef = free,
+    .comparf = cmpIpair,
 };
 
 static void vmapAdd(Dt_t * map, int i, int j)
@@ -211,13 +192,11 @@ static void vmapAdd(Dt_t * map, int i, int j)
 static int vMap(Dt_t * map, int i)
 {
     Ipair *ip;
-    ip = (Ipair *) dtmatch(map, &i);
+    ip = dtmatch(map, &i);
     return ip->j;
 }
 
-/* mapTri:
- * Map vertex indices from router_t to tripoly_t coordinates.
- */
+/// map vertex indices from router_t to tripoly_t coordinates
 static void mapTri(Dt_t * map, tri * tp)
 {
     for (; tp; tp = tp->nxttri) {
@@ -226,21 +205,17 @@ static void mapTri(Dt_t * map, tri * tp)
     }
 }
 
-/* addTri:
- */
 static tri *
 addTri(int i, int j, tri * oldp)
 {
-    tri *tp = NEW(tri);
+    tri *tp = gv_alloc(sizeof(tri));
     tp->v.i = i;
     tp->v.j = j;
     tp->nxttri = oldp;
     return tp;
 }
 
-/* bisect:
- * Return the angle bisecting the angle pp--cp--np
- */
+/// return the angle bisecting the angle pp--cp--np
 static double bisect(pointf pp, pointf cp, pointf np)
 {
     double theta, phi;
@@ -249,9 +224,7 @@ static double bisect(pointf pp, pointf cp, pointf np)
     return (theta + phi) / 2.0;
 }
 
-/* raySeg:
- * Check if ray v->w intersects segment a--b.
- */
+/// check if ray v->w intersects segment a--b
 static int raySeg(pointf v, pointf w, pointf a, pointf b)
 {
     int wa = wind(v, w, a);
@@ -259,14 +232,13 @@ static int raySeg(pointf v, pointf w, pointf a, pointf b)
     if (wa == wb)
 	return 0;
     if (wa == 0) {
-	return (wind(v, b, w) * wind(v, b, a) >= 0);
+	return wind(v, b, w) * wind(v, b, a) >= 0;
     } else {
-	return (wind(v, a, w) * wind(v, a, b) >= 0);
+	return wind(v, a, w) * wind(v, a, b) >= 0;
     }
 }
 
-/* raySegIntersect:
- * Find the point p where ray v->w intersects segment ai-bi, if any.
+/* Find the point p where ray v->w intersects segment ai-bi, if any.
  * Return 1 on success, 0 on failure
  */
 static int
@@ -278,12 +250,7 @@ raySegIntersect(pointf v, pointf w, pointf a, pointf b, pointf * p)
 	return 0;
 }
 
-#ifdef DEVDBG
-#include <psdbg.c>
-#endif
-
-/* triPoint:
- * Given the triangle vertex v, and point w so that v->w points
+/* Given the triangle vertex v, and point w so that v->w points
  * into the polygon, return where the ray v->w intersects the
  * polygon. The search uses all of the opposite sides of triangles
  * with v as vertex.
@@ -299,42 +266,31 @@ triPoint(tripoly_t * trip, int vx, pointf v, pointf w, pointf * ip)
 	    (v, w, trip->poly.ps[tp->v.i], trip->poly.ps[tp->v.j], ip))
 	    return 0;
     }
-#ifdef DEVDBG
-    psInit();
-    psComment ("Failure in triPoint");
-    psColor("0 0 1");
-    psSeg (v, w);
-    for (tp = trip->triMap[vx]; tp; tp = tp->nxttri) {
-	psTri(v, trip->poly.ps[tp->v.i], trip->poly.ps[tp->v.j]);
-    }
-    psOut(stderr);
-#endif
     return 1;
 }
 
-/* ctrlPtIdx:
- * Find the index of v in the points polys->ps.
+/* Find the index of v in the points polys->ps.
  * We start at 1 since the point corresponding to 0 
  * will never be used as v.
  */
 static int ctrlPtIdx(pointf v, Ppoly_t * polys)
 {
     pointf w;
-    int i;
-    for (i = 1; i < polys->pn; i++) {
+    for (size_t i = 1; i < polys->pn; i++) {
 	w = polys->ps[i];
-	if ((w.x == v.x) && (w.y == v.y))
-	    return i;
+	if (w.x == v.x && w.y == v.y) {
+	    assert(i <= INT_MAX);
+	    return (int)i;
+	}
     }
     return -1;
 }
 
 #define SEP 15
 
-/* mkCtrlPts:
- * Generate mult points associated with v.
+/* Generate mult points associated with v.
  * The points will lie on the ray bisecting the angle prev--v--nxt.
- * The first point will aways be v.
+ * The first point will always be v.
  * The rest are positioned equally spaced with maximum spacing SEP.
  * In addition, they all lie within the polygon trip->poly.
  * Parameter s gives the index after which a vertex lies on the
@@ -344,8 +300,7 @@ static int ctrlPtIdx(pointf v, Ppoly_t * polys)
 static pointf *mkCtrlPts(int s, int mult, pointf prev, pointf v,
 			   pointf nxt, tripoly_t * trip)
 {
-    pointf *ps;
-    int idx = ctrlPtIdx(v, &(trip->poly));
+    int idx = ctrlPtIdx(v, &trip->poly);
     int i;
     double d, sep, theta, sinTheta, cosTheta;
     pointf q, w;
@@ -353,7 +308,7 @@ static pointf *mkCtrlPts(int s, int mult, pointf prev, pointf v,
     if (idx < 0)
 	return NULL;
 
-    ps = N_GNEW(mult, pointf);
+    pointf *ps = gv_calloc(mult, sizeof(pointf));
     theta = bisect(prev, v, nxt);
     sinTheta = sin(theta);
     cosTheta = cos(theta);
@@ -374,6 +329,7 @@ static pointf *mkCtrlPts(int s, int mult, pointf prev, pointf v,
     }
 
     if (triPoint(trip, idx, v, w, &q)) {
+	free(ps);
 	return 0;
     }
 
@@ -401,7 +357,7 @@ static pointf *mkCtrlPts(int s, int mult, pointf prev, pointf v,
  */
 
 typedef struct {
-    int ne;         /* no. of edges. */
+    size_t ne;      // no. of edges.
     int *edges;     /* indices of edges adjacent to node. */
     pointf ctr;     /* center of triangle. */
 } tnode;
@@ -414,8 +370,9 @@ typedef struct {
 
 typedef struct {
     tnode *nodes;
+    size_t nnodes; // number of nodes
     tedge *edges;
-    int nedges;    /* no. of edges; no. of nodes is stored in router_t */
+    int nedges; // number of edges
 } tgraph;
 
 struct router_s {
@@ -425,11 +382,10 @@ struct router_s {
     int *tris;	/* indices of triangle i are tris[3*i]...tris[3*i+2] */
     Dt_t *trimap; /* map from obstacle side (a,b) to index of adj. triangle */
     int tn;	  /* no. of nodes in tg */
-    tgraph *tg;	  /* graph of triangles */
+    tgraph tg;	  /* graph of triangles */
 };
 
-/* triCenter:
- * Given an array of points and 3 integer indices,
+/* Given an array of points and 3 integer indices,
  * compute and return the center of the triangle.
  */
 static pointf triCenter(pointf * pts, int *idxs)
@@ -445,33 +401,28 @@ static pointf triCenter(pointf * pts, int *idxs)
 
 #define MARGIN 32
 
-/* bbox:
- * Compute bounding box of polygons, and return it
+/* Compute bounding box of polygons, and return it
  * with an added margin of MARGIN.
  * Store total number of points in *np.
  */
 static boxf bbox(Ppoly_t** obsp, int npoly, int *np)
 {
     boxf bb;
-    int i, j, cnt = 0;
+    int i, cnt = 0;
     pointf p;
     Ppoly_t* obs;
 
-    bb.LL.x = bb.LL.y = MAXDOUBLE;
-    bb.UR.x = bb.UR.y = -MAXDOUBLE;
+    bb.LL.x = bb.LL.y = DBL_MAX;
+    bb.UR.x = bb.UR.y = -DBL_MAX;
 
     for (i = 0; i < npoly; i++) {
 	obs = *obsp++;
-	for (j = 0; j < obs->pn; j++) {
+	for (size_t j = 0; j < obs->pn; j++) {
 	    p = obs->ps[j];
-	    if (p.x < bb.LL.x)
-		bb.LL.x = p.x;
-	    if (p.x > bb.UR.x)
-		bb.UR.x = p.x;
-	    if (p.y < bb.LL.y)
-		bb.LL.y = p.y;
-	    if (p.y > bb.UR.y)
-		bb.UR.y = p.y;
+	    bb.LL.x = fmin(bb.LL.x, p.x);
+	    bb.UR.x = fmax(bb.UR.x, p.x);
+	    bb.LL.y = fmin(bb.LL.y, p.y);
+	    bb.UR.y = fmax(bb.UR.y, p.y);
 	    cnt++;
 	}
     }
@@ -488,46 +439,30 @@ static boxf bbox(Ppoly_t** obsp, int npoly, int *np)
 
 static int *mkTriIndices(surface_t * sf)
 {
-    int *tris = N_GNEW(3 * sf->nfaces, int);
+    int *tris = gv_calloc(3 * sf->nfaces, sizeof(int));
     memcpy(tris, sf->faces, 3 * sf->nfaces * sizeof(int));
     return tris;
 }
 
-/* degT:
- * Given a pointer to an array of 3 integers, return
- * the number not equal to -1
- */
-static int degT(int *ip)
-{
-    ip++;
-    if (*ip++ == -1)
-	return 1;
-    if (*ip == -1)
-	return 2;
-    else
-	return 3;
-}
-
-/* sharedEdge:
- * Returns a pair of integer (x,y), x < y, where x and y are the
+/* Returns a pair of integer (x,y), x < y, where x and y are the
  * indices of the two vertices of the shared edge.
  */
 static ipair sharedEdge(int *p, int *q)
 {
     ipair pt;
-    int tmp, p1, p2;
+    int p1, p2;
     p1 = *p;
     p2 = *(p + 1);
     if (p1 == *q) {
-	if ((p2 != *(q + 1)) && (p2 != *(q + 2))) {
+	if (p2 != *(q + 1) && p2 != *(q + 2)) {
 	    p2 = *(p + 2);
 	}
     } else if (p1 == *(q + 1)) {
-	if ((p2 != *q) && (p2 != *(q + 2))) {
+	if (p2 != *q && p2 != *(q + 2)) {
 	    p2 = *(p + 2);
 	}
     } else if (p1 == *(q + 2)) {
-	if ((p2 != *q) && (p2 != *(q + 1))) {
+	if (p2 != *q && p2 != *(q + 1)) {
 	    p2 = *(p + 2);
 	}
     } else {
@@ -535,21 +470,19 @@ static ipair sharedEdge(int *p, int *q)
     }
 
     if (p1 > p2) {
-	tmp = p1;
-	p1 = p2;
-	p2 = tmp;
+	SWAP(&p1, &p2);
     }
     pt.i = p1;
     pt.j = p2;
     return pt;
 }
 
-/* addTriEdge:
- * Add an edge to g, with tail t, head h, distance d, and shared
+/* Add an edge to g, with tail t, head h, and shared
  * segment seg.
  */
-static void addTriEdge(tgraph * g, int t, int h, double d, ipair seg)
-{
+static void addTriEdge(tgraph *g, int t, int h, ipair seg) {
+    g->edges = gv_recalloc(g->edges, g->nedges, g->nedges + 1,
+                           sizeof(g->edges[0]));
     tedge *ep = g->edges + g->nedges;
     tnode *tp = g->nodes + t;
     tnode *hp = g->nodes + h;
@@ -559,7 +492,11 @@ static void addTriEdge(tgraph * g, int t, int h, double d, ipair seg)
     ep->dist = DIST(tp->ctr, hp->ctr);
     ep->seg = seg;
 
+    tp->edges = gv_recalloc(tp->edges, tp->ne, tp->ne + 1,
+                            sizeof(tp->edges[0]));
     tp->edges[tp->ne++] = g->nedges;
+    hp->edges = gv_recalloc(hp->edges, hp->ne, hp->ne + 1,
+                            sizeof(hp->edges[0]));
     hp->edges[hp->ne++] = g->nedges;
 
     g->nedges++;
@@ -567,68 +504,39 @@ static void addTriEdge(tgraph * g, int t, int h, double d, ipair seg)
 
 static void freeTriGraph(tgraph * tg)
 {
-    free(tg->nodes->edges);
+    for (size_t i = 0; i < tg->nnodes; ++i) {
+        free(tg->nodes[i].edges);
+    }
     free(tg->nodes);
     free(tg->edges);
-    free(tg);
+    *tg = (tgraph){0};
 }
 
-/* mkTriGraph:
- * Generate graph with triangles as nodes and an edge iff two triangles
+/* Generate graph with triangles as nodes and an edge iff two triangles
  * share an edge.
  */
-static tgraph *mkTriGraph(surface_t * sf, int maxv, pointf * pts)
-{
-    tgraph *g;
-    tnode *np;
-    int j, i, ne = 0;
-    int *edgei;
-    int *jp;
+static tgraph mkTriGraph(surface_t *sf, pointf *pts) {
+    int j;
 
-    /* ne is twice no. of edges */
-    for (i = 0; i < 3 * sf->nfaces; i++)
-	if (sf->neigh[i] != -1)
-	    ne++;
-
-    g = GNEW(tgraph);
+    tgraph g = {0};
 
     /* plus 2 for nodes added as endpoints of an edge */
-    g->nodes = N_GNEW(sf->nfaces + 2, tnode);
+    g.nnodes = sf->nfaces + 2;
+    g.nodes = gv_calloc(g.nnodes, sizeof(tnode));
 
-    /* allow 1 possible extra edge per triangle, plus 
-     * obstacles can have at most maxv triangles touching 
-     */
-    edgei = N_GNEW(sf->nfaces + ne + 2 * maxv, int);
-    g->edges = N_GNEW(ne/2 + 2 * maxv, tedge);
-    g->nedges = 0;
-
-    for (i = 0; i < sf->nfaces; i++) {
-	np = g->nodes + i;
-	np->ne = 0;
-	np->edges = edgei;
+    for (int i = 0; i < sf->nfaces; i++) {
+	tnode *const np = g.nodes + i;
 	np->ctr = triCenter(pts, sf->faces + 3 * i);
-	edgei += degT(sf->neigh + 3 * i) + 1;
     }
-    /* initialize variable nodes */
-    np = g->nodes + i;
-    np->ne = 0;
-    np->edges = edgei;
-    np++;
-    np->ne = 0;
-    np->edges = edgei + maxv;
 
-    for (i = 0; i < sf->nfaces; i++) {
-	np = g->nodes + i;
-	jp = sf->neigh + 3 * i;
-        ne = 0;
-	while ((ne < 3) && ((j = *jp++) != -1)) {
+    for (int i = 0; i < sf->nfaces; i++) {
+	int *jp = sf->neigh + 3 * i;
+	for (int ne = 0; ne < 3 && (j = *jp++) != -1; ++ne) {
 	    if (i < j) {
-		double dist = DIST(np->ctr, (g->nodes + j)->ctr);
 		ipair seg =
 		    sharedEdge(sf->faces + 3 * i, sf->faces + 3 * j);
-		addTriEdge(g, i, j, dist, seg);
+		addTriEdge(&g, i, j, seg);
 	    }
-	    ne++;
 	}
     }
 
@@ -641,77 +549,26 @@ void freeRouter(router_t * rtr)
     free(rtr->obs);
     free(rtr->tris);
     dtclose(rtr->trimap);
-    freeTriGraph(rtr->tg);
+    freeTriGraph(&rtr->tg);
     free(rtr);
 }
 
-#ifdef DEVDBG
-static void
-prTriPoly (tripoly_t *poly, int si, int ei)
-{
-    FILE* fp = fopen ("dumppoly","w");
-    
-    psInit();
-    psPoly (&(poly->poly));
-    psPoint (poly->poly.ps[si]);
-    psPoint (poly->poly.ps[ei]);
-    psOut(fp);
-    fclose(fp);
-}
-
-static void
-prTriGraph (router_t* rtr, int n)
-{
-    FILE* fp = fopen ("dump","w");
-    int i;
-    pointf* pts = rtr->ps;
-    tnode* nodes = rtr->tg->nodes;
-    char buf[BUFSIZ];
-    
-    psInit();
-    for (i=0;i < rtr->tn; i++) {
-        pointf a = pts[rtr->tris[3*i]];
-        pointf b = pts[rtr->tris[3*i+1]];
-        pointf c = pts[rtr->tris[3*i+2]];
-	psTri (a, b,c);
-	sprintf (buf, "%d", i);
-        psTxt (buf, nodes[i].ctr);
-    }
-    for (i=rtr->tn;i < n; i++) {
-	sprintf (buf, "%d", i);
-        psTxt (buf, nodes[i].ctr);
-    }
-    psColor ("1 0 0");
-    for (i=0;i < rtr->tg->nedges; i++) {
-        tedge* e = rtr->tg->edges+i;
-        psSeg (nodes[e->t].ctr, nodes[e->h].ctr);
-    }
-    psOut(fp);
-    fclose(fp);
-}
-#endif
-
 router_t *mkRouter(Ppoly_t** obsp, int npoly)
 {
-    router_t *rtr = NEW(router_t);
+    router_t *rtr = gv_alloc(sizeof(router_t));
     Ppoly_t* obs;
     boxf bb;
-    pointf *pts;
     int npts;
     surface_t *sf;
-    int *segs;
-    double *x;
-    double *y;
-    int maxv = 4; /* default max. no. of vertices in an obstacle; set below */
     /* points in obstacle i have indices obsi[i] through obsi[i+1]-1 in pts
      */
-    int *obsi = N_NEW(npoly + 1, int);
-    int i, j, ix = 4, six = 0;
+    int *obsi = gv_calloc(npoly + 1, sizeof(int));
+    int i, ix = 4, six = 0;
 
     bb = bbox(obsp, npoly, &npts);
     npts += 4;			/* 4 points of bounding box */
-    pts = N_GNEW(npts, pointf);	/* all points are stored in pts */
-    segs = N_GNEW(2 * npts, int);	/* indices of points forming segments */
+    pointf *pts = gv_calloc(npts, sizeof(pointf)); // all points are stored in pts
+    int *segs = gv_calloc(2 * npts, sizeof(int)); // indices of points forming segments
 
     /* store bounding box in CCW order */
     pts[0] = bb.LL;
@@ -732,7 +589,7 @@ router_t *mkRouter(Ppoly_t** obsp, int npoly)
     for (i = 0; i < npoly; i++) {
 	obsi[i] = ix;
         obs = *obsp++;
-	for (j = 1; j <= obs->pn; j++) {
+	for (size_t j = 1; j <= obs->pn; j++) {
 	    segs[six++] = ix;
 	    if (j < obs->pn)
 		segs[six++] = ix + 1;
@@ -740,14 +597,12 @@ router_t *mkRouter(Ppoly_t** obsp, int npoly)
 		segs[six++] = obsi[i];
 	    pts[ix++] = obs->ps[j - 1];
 	}
-	if (obs->pn > maxv)
-	    maxv = obs->pn;
     }
     obsi[i] = ix;
 
     /* copy points into coordinate arrays */
-    x = N_GNEW(npts, double);
-    y = N_GNEW(npts, double);
+    double *x = gv_calloc(npts, sizeof(double));
+    double *y = gv_calloc(npts, sizeof(double));
     for (i = 0; i < npts; i++) {
 	x[i] = pts[i].x;
 	y[i] = pts[i].y;
@@ -763,49 +618,31 @@ router_t *mkRouter(Ppoly_t** obsp, int npoly)
     rtr->tris = mkTriIndices(sf);
     rtr->trimap = mapSegToTri(sf);
     rtr->tn = sf->nfaces;
-    rtr->tg = mkTriGraph(sf, maxv, pts);
+    rtr->tg = mkTriGraph(sf, pts);
 
     freeSurface(sf);
     return rtr;
 }
 
-/* finishEdge:
- * Finish edge generation, clipping to nodes and adding arrowhead
+/* Finish edge generation, clipping to nodes and adding arrowhead
  * if necessary, and adding edge labels
  */
-static void
-finishEdge (graph_t* g, edge_t* e, Ppoly_t spl, int flip, pointf p, pointf q)
-{
-    int j;
-    pointf *spline = N_GNEW(spl.pn, pointf);
-    pointf p1, q1;
-
+static void finishEdge(edge_t* e, Ppoly_t spl, int flip) {
     if (flip) {
-	for (j = 0; j < spl.pn; j++) {
-	    spline[spl.pn - 1 - j] = spl.ps[j];
+	for (size_t j = 0; j < spl.pn / 2; j++) {
+	    SWAP(&spl.ps[spl.pn - 1 - j], &spl.ps[j]);
 	}
-	p1 = q;
-	q1 = p;
-    }
-    else {
-	for (j = 0; j < spl.pn; j++) {
-	    spline[j] = spl.ps[j];
-	}
-	p1 = p;
-	q1 = q;
     }
     if (Verbose > 1)
 	fprintf(stderr, "spline %s %s\n", agnameof(agtail(e)), agnameof(aghead(e)));
-    clip_and_install(e, aghead(e), spline, spl.pn, &sinfo);
-    free(spline);
+    clip_and_install(e, aghead(e), spl.ps, spl.pn, &sinfo);
 
-    addEdgeLabels(g, e, p1, q1);
+    addEdgeLabels(e);
 }
 
 #define EQPT(p,q) (((p).x==(q).x)&&((p).y==(q).y))
 
-/* tweakEnd:
- * Hack because path routing doesn't know about the interiors
+/* Hack because path routing doesn't know about the interiors
  * of polygons. If the first or last segment of the shortest path
  * lies along one of the polygon boundaries, the path may flip
  * inside the polygon. To avoid this, we shift the point a bit.
@@ -818,9 +655,7 @@ finishEdge (graph_t* g, edge_t* e, Ppoly_t spl, int flip, pointf p, pointf q)
  *
  * Otherwise, return p unchanged.
  */
-static Ppoint_t
-tweakEnd (Ppoly_t poly, int s, Ppolyline_t pl, Ppoint_t q)
-{
+static Ppoint_t tweakEnd(Ppoly_t poly, size_t s, Ppoint_t q) {
     Ppoint_t prv, nxt, p;
 
     p = poly.ps[s];
@@ -831,51 +666,41 @@ tweakEnd (Ppoly_t poly, int s, Ppolyline_t pl, Ppoint_t q)
 	prv = poly.ps[s - 1];
     if (EQPT(q, nxt) || EQPT(q, prv) ){
 	Ppoint_t m;
-	double d;
 	m.x = (nxt.x + prv.x)/2.0 - p.x;
 	m.y = (nxt.y + prv.y)/2.0 - p.y;
-	d = LEN(m.x,m.y);
+	const double d = hypot(m.x, m.y);
 	p.x += 0.1*m.x/d;
 	p.y += 0.1*m.y/d;
     }
     return p;
 }
 
-static void
-tweakPath (Ppoly_t poly, int s, int t, Ppolyline_t pl)
-{
-    pl.ps[0] = tweakEnd (poly, s, pl, pl.ps[1]);
-    pl.ps[pl.pn-1] = tweakEnd (poly, t, pl, pl.ps[pl.pn-2]);
+static void tweakPath(Ppoly_t poly, size_t t, Ppolyline_t pl) {
+    pl.ps[0] = tweakEnd(poly, 0, pl.ps[1]);
+    pl.ps[pl.pn-1] = tweakEnd (poly, t, pl.ps[pl.pn-2]);
 }
 
 
-/* genroute:
- * Generate splines for e and cohorts.
- * Edges go from s to t.
+/* Generate splines for e and cohorts.
+ * Edges go from 0 to t.
  * Return 0 on success.
  */
-static int 
-genroute(graph_t* g, tripoly_t * trip, int s, int t, edge_t * e, int doPolyline)
-{
+static int genroute(tripoly_t *trip, int t, edge_t *e, int doPolyline) {
     pointf eps[2];
-    Pvector_t evs[2];
     pointf **cpts = NULL;		/* lists of control points */
     Ppoly_t poly;
     Ppolyline_t pl, spl;
-    int i, j;
     Ppolyline_t mmpl;
-    Pedge_t *medges = N_GNEW(trip->poly.pn, Pedge_t);
-    int pn;
     int mult = ED_count(e);
     node_t* head = aghead(e);
     int rv = 0;
 
     poly.ps = NULL;
     pl.pn = 0;
-    eps[0].x = trip->poly.ps[s].x, eps[0].y = trip->poly.ps[s].y;
+    eps[0].x = trip->poly.ps[0].x, eps[0].y = trip->poly.ps[0].y;
     eps[1].x = trip->poly.ps[t].x, eps[1].y = trip->poly.ps[t].y;
     if (Pshortestpath(&(trip->poly), eps, &pl) < 0) {
-	agerr(AGWARN, "Could not create control points for multiple spline for edge (%s,%s)\n", agnameof(agtail(e)), agnameof(aghead(e)));
+	agwarningf("Could not create control points for multiple spline for edge (%s,%s)\n", agnameof(agtail(e)), agnameof(aghead(e)));
 	rv = 1;
 	goto finish;
     }
@@ -885,54 +710,53 @@ genroute(graph_t* g, tripoly_t * trip, int s, int t, edge_t * e, int doPolyline)
 	goto finish;
     }
 
-    evs[0].x = evs[0].y = 0;
-    evs[1].x = evs[1].y = 0;
-
-    if ((mult == 1) || Concentrate) {
+    if (mult == 1 || Concentrate) {
 	poly = trip->poly;
-	for (j = 0; j < poly.pn; j++) {
+	Pedge_t *medges = gv_calloc(poly.pn, sizeof(Pedge_t));
+	for (size_t j = 0; j < poly.pn; j++) {
 	    medges[j].a = poly.ps[j];
 	    medges[j].b = poly.ps[(j + 1) % poly.pn];
 	}
-	tweakPath (poly, s, t, pl);
-	if (Proutespline(medges, poly.pn, pl, evs, &spl) < 0) {
-	    agerr(AGWARN, "Could not create control points for multiple spline for edge (%s,%s)\n", agnameof(agtail(e)), agnameof(aghead(e)));
+	assert(t >= 0);
+	tweakPath(poly, (size_t)t, pl);
+	if (Proutespline(medges, poly.pn, pl, (Pvector_t[2]){0}, &spl) < 0) {
+	    agwarningf("Could not create control points for multiple spline for edge (%s,%s)\n", agnameof(agtail(e)), agnameof(aghead(e)));
 	    rv = 1;
 	    goto finish;
 	}
-	finishEdge (g, e, spl, aghead(e) != head, eps[0], eps[1]);
+	finishEdge(e, spl, aghead(e) != head);
 	free(medges);
 
 	return 0;
     }
     
-    pn = 2 * (pl.pn - 1);
+    const size_t pn = 2 * (pl.pn - 1);
 
-    cpts = N_NEW(pl.pn - 2, pointf *);
-    for (i = 0; i < pl.pn - 2; i++) {
+    cpts = gv_calloc(pl.pn - 2, sizeof(pointf *));
+    for (size_t i = 0; i + 2 < pl.pn; i++) {
 	cpts[i] =
 	    mkCtrlPts(t, mult+1, pl.ps[i], pl.ps[i + 1], pl.ps[i + 2], trip);
 	if (!cpts[i]) {
-	    agerr(AGWARN, "Could not create control points for multiple spline for edge (%s,%s)\n", agnameof(agtail(e)), agnameof(aghead(e)));
+	    agwarningf("Could not create control points for multiple spline for edge (%s,%s)\n", agnameof(agtail(e)), agnameof(aghead(e)));
 	    rv = 1;
 	    goto finish;
 	}
     }
 
-    poly.ps = N_GNEW(pn, pointf);
+    poly.ps = gv_calloc(pn, sizeof(pointf));
     poly.pn = pn;
 
-    for (i = 0; i < mult; i++) {
+    for (int i = 0; i < mult; i++) {
 	poly.ps[0] = eps[0];
-	for (j = 1; j < pl.pn - 1; j++) {
+	for (size_t j = 1; j + 1 < pl.pn; j++) {
 	    poly.ps[j] = cpts[j - 1][i];
 	}
 	poly.ps[pl.pn - 1] = eps[1];
-	for (j = 1; j < pl.pn - 1; j++) {
+	for (size_t j = 1; j + 1 < pl.pn; j++) {
 	    poly.ps[pn - j] = cpts[j - 1][i + 1];
 	}
 	if (Pshortestpath(&poly, eps, &mmpl) < 0) {
-	    agerr(AGWARN, "Could not create control points for multiple spline for edge (%s,%s)\n", agnameof(agtail(e)), agnameof(aghead(e)));
+	    agwarningf("Could not create control points for multiple spline for edge (%s,%s)\n", agnameof(agtail(e)), agnameof(aghead(e)));
 	    rv = 1;
 	    goto finish;
 	}
@@ -941,43 +765,44 @@ genroute(graph_t* g, tripoly_t * trip, int s, int t, edge_t * e, int doPolyline)
 	    make_polyline (mmpl, &spl);
 	}
 	else {
-	    for (j = 0; j < poly.pn; j++) {
+	    Pedge_t *medges = gv_calloc(poly.pn, sizeof(Pedge_t));
+	    for (size_t j = 0; j < poly.pn; j++) {
 		medges[j].a = poly.ps[j];
 		medges[j].b = poly.ps[(j + 1) % poly.pn];
 	    }
-	    tweakPath (poly, 0, pl.pn-1, mmpl);
-	    if (Proutespline(medges, poly.pn, mmpl, evs, &spl) < 0) {
-		agerr(AGWARN, "Could not create control points for multiple spline for edge (%s,%s)\n", 
+	    tweakPath(poly, pl.pn - 1, mmpl);
+	    const bool failed_routing =
+	      Proutespline(medges, poly.pn, mmpl, (Pvector_t[2]){0}, &spl) < 0;
+	    free(medges);
+	    if (failed_routing) {
+		agwarningf("Could not create control points for multiple spline for edge (%s,%s)\n", 
 		    agnameof(agtail(e)), agnameof(aghead(e)));
 		rv = 1;
 		goto finish;
 	    }
 	}
-	finishEdge (g, e, spl, aghead(e) != head, eps[0], eps[1]);
+	finishEdge(e, spl, aghead(e) != head);
 
 	e = ED_to_virt(e);
     }
 
 finish :
     if (cpts) {
-	for (i = 0; i < pl.pn - 2; i++)
+	for (size_t i = 0; i + 2 < pl.pn; i++)
 	    free(cpts[i]);
 	free(cpts);
     }
-    free(medges);
     free(poly.ps);
     return rv;
 }
 
 #define NSMALL -0.0000000001
 
-/* inCone:
- * Returns true iff q is in the convex cone a-b-c
- */
+/// returns true iff q is in the convex cone a-b-c
 static int
 inCone (pointf a, pointf b, pointf c, pointf q)
 {
-    return ((area2(q,a,b) >= NSMALL) && (area2(q,b,c) >= NSMALL));
+  return area2(q,a,b) >= NSMALL && area2(q,b,c) >= NSMALL;
 }
 
 static pointf north = {0, 1};
@@ -989,8 +814,7 @@ static pointf southwest = {-1, -1};
 static pointf west = {-1, 0};
 static pointf northwest = {-1, 1};
 
-/* addEndpoint:
- * Add node to graph representing spline end point p inside obstruction obs_id.
+/* Add node to graph representing spline end point p inside obstruction obs_id.
  * For each side of obstruction, add edge from p to corresponding triangle.
  * The node id of the new node in the graph is v_id.
  * If p lies on the side of its node (sides != 0), we limit the triangles
@@ -1003,7 +827,6 @@ static void addEndpoint(router_t * rtr, pointf p, node_t* v, int v_id, int sides
     int endi = rtr->obs[obs_id + 1];
     pointf* pts = rtr->ps;
     int i, t;
-    double d;
     pointf vr, v0, v1;
 
     switch (sides) {
@@ -1054,8 +877,8 @@ static void addEndpoint(router_t * rtr, pointf p, node_t* v, int v_id, int sides
 	break;
     }
 
-    rtr->tg->nodes[v_id].ne = 0;
-    rtr->tg->nodes[v_id].ctr = p;
+    rtr->tg.nodes[v_id].ne = 0;
+    rtr->tg.nodes[v_id].ctr = p;
     for (i = starti; i < endi; i++) {
 	ipair seg;
 	seg.i = i;
@@ -1066,29 +889,27 @@ static void addEndpoint(router_t * rtr, pointf p, node_t* v, int v_id, int sides
 	t = findMap(rtr->trimap, seg.i, seg.j);
 	if (sides && !inCone (v0, p, v1, pts[seg.i]) && !inCone (v0, p, v1, pts[seg.j]) && !raySeg(p,vr,pts[seg.i],pts[seg.j]))
 	    continue;
-	d = DIST(p, (rtr->tg->nodes + t)->ctr);
-	addTriEdge(rtr->tg, v_id, t, d, seg);
+	addTriEdge(&rtr->tg, v_id, t, seg);
     }
+    assert(rtr->tg.nodes[v_id].ne > 0 && "no edges were added");
 }
 
-/* edgeToSeg:
- * Given edge from i to j, find segment associated
+/* Given edge from i to j, find segment associated
  * with the edge.
  *
  * This lookup could be made faster by modifying the 
  * shortest path algorithm to store the edges rather than
  * the nodes.
  */
-static ipair edgeToSeg(tgraph * tg, int i, int j)
-{
-    ipair ip;
-    tnode *np = tg->nodes + i;
+static ipair edgeToSeg(tgraph tg, int i, int j) {
+    ipair ip = {0, 0};
+    tnode *np = tg.nodes + i;
     tedge *ep;
 
-    for (i = 0; i < np->ne; i++) {
-	ep = tg->edges + np->edges[i];
-	if ((ep->t == j) || (ep->h == j))
-	    return (ep->seg);
+    for (size_t k = 0; k < np->ne; k++) {
+	ep = tg.edges + np->edges[k];
+	if (ep->t == j || ep->h == j)
+	    return ep->seg;
     }
 
     assert(0);
@@ -1098,12 +919,11 @@ static ipair edgeToSeg(tgraph * tg, int i, int j)
 static void
 freeTripoly (tripoly_t* trip)
 {
-    int i;
     tri* tp;
     tri* nxt;
 
     free (trip->poly.ps);
-    for (i = 0; i < trip->poly.pn; i++) {
+    for (size_t i = 0; i < trip->poly.pn; i++) {
 	for (tp = trip->triMap[i]; tp; tp = nxt) {
 	    nxt = tp->nxttri;
 	    free (tp);
@@ -1125,8 +945,7 @@ typedef struct {
     tri *ts;
 } side_t;
 
-/* mkPoly:
- * Construct simple polygon from shortest path from t to s in g.
+/* Construct simple polygon from shortest path from t to s in g.
  * dad gives the indices of the triangles on path.
  * sx used to store index of s in points.
  * index of t is always 0
@@ -1137,24 +956,22 @@ static tripoly_t *mkPoly(router_t * rtr, int *dad, int s, int t,
     tripoly_t *ps;
     int nxt;
     ipair p;
-    int nt = 0;
-    side_t *side1;
-    side_t *side2;
-    int i, idx;
+    size_t nt = 0;
+    int idx;
     int cnt1 = 0;
     int cnt2 = 0;
     pointf *pts;
-    pointf *pps;
     /* maps vertex index used in router_t to vertex index used in tripoly */
     Dt_t *vmap;
-    tri **trim;
 
     /* count number of triangles in path */
-    for (nxt = dad[t]; nxt != s; nxt = dad[nxt])
+    for (nxt = dad[t]; nxt != s; nxt = dad[nxt]) {
 	nt++;
+	assert (nxt != dad[nxt] && "infinite loop due to 'nxt' not changing");
+    }
 
-    side1 = N_NEW(nt + 4, side_t);
-    side2 = N_NEW(nt + 4, side_t);
+    side_t *side1 = gv_calloc(nt + 4, sizeof(side_t));
+    side_t *side2 = gv_calloc(nt + 4, sizeof(side_t));
 
     nxt = dad[t];
     p = edgeToSeg(rtr->tg, nxt, t);
@@ -1210,28 +1027,28 @@ static tripoly_t *mkPoly(router_t * rtr, int *dad, int s, int t,
     vmap = dtopen(&ipairdisc, Dtoset);
     vmapAdd(vmap, -1, 0);
     vmapAdd(vmap, -2, cnt1 + 1);
-    pps = pts = N_GNEW(nt + 4, pointf);
-    trim = N_NEW(nt + 4, tri *);
+    pointf *pps = pts = gv_calloc(nt + 4, sizeof(pointf));
+    tri **trim = gv_calloc(nt + 4, sizeof(tri*));
     *pps++ = p_t;
     idx = 1;
-    for (i = 0; i < cnt1; i++) {
+    for (int i = 0; i < cnt1; i++) {
 	vmapAdd(vmap, side1[i].v, idx);
 	*pps++ = rtr->ps[side1[i].v];
 	trim[idx++] = side1[i].ts;
     }
     *pps++ = p_s;
     idx++;
-    for (i = cnt2 - 1; i >= 0; i--) {
+    for (int i = cnt2 - 1; i >= 0; i--) {
 	vmapAdd(vmap, side2[i].v, idx);
 	*pps++ = rtr->ps[side2[i].v];
 	trim[idx++] = side2[i].ts;
     }
 
-    for (i = 0; i < nt + 4; i++) {
+    for (size_t i = 0; i < nt + 4; i++) {
 	mapTri(vmap, trim[i]);
     }
 
-    ps = NEW(tripoly_t);
+    ps = gv_alloc(sizeof(tripoly_t));
     ps->poly.pn = nt + 4;  /* nt triangles gives nt+2 points plus s and t */
     ps->poly.ps = pts;
     ps->triMap = trim;
@@ -1243,26 +1060,23 @@ static tripoly_t *mkPoly(router_t * rtr, int *dad, int s, int t,
     return ps;
 }
 
-/* resetGraph:
- * Remove edges and nodes added for current edge routing
- */
-static void resetGraph(tgraph * g, int ncnt, int ecnt)
-{
+/// remove edges and nodes added for current edge routing
+static void resetGraph(tgraph g, int ncnt, int ecnt,
+                       size_t *original_edge_count) {
     int i;
-    tnode *np = g->nodes;
-    g->nedges = ecnt;
+    tnode *np = g.nodes;
+    g.nedges = ecnt;
     for (i = 0; i < ncnt; i++) {
-	if (np->edges + np->ne == (np + 1)->edges)
-	    np->ne--;
+	np->ne = original_edge_count[i];
 	np++;
     }
 }
 
 #define PQTYPE int
-#define PQVTYPE float
+#define PQVTYPE double
 
 #define PQ_TYPES
-#include "fPQ.h"
+#include <neatogen/fPQ.h>
 #undef PQ_TYPES
 
 typedef struct {
@@ -1275,27 +1089,24 @@ typedef struct {
 #define N_IDX(pq,n) ((PPQ*)pq)->idxs[n]
 
 #define PQ_CODE
-#include "fPQ.h"
+#include <neatogen/fPQ.h>
 #undef PQ_CODE
 
 #define N_DAD(n) dad[n]
 #define E_WT(e) (e->dist)
-#define UNSEEN -MAXFLOAT
+#define UNSEEN (-FLT_MAX)
 
-/* triPath:
- * Find the shortest path with lengths in g from
+/* Find the shortest path with lengths in g from
  * v0 to v1. The returned vector (dad) encodes the
  * shorted path from v1 to v0. That path is given by
  * v1, dad[v1], dad[dad[v1]], ..., v0.
  */
-static int *
-triPath(tgraph * g, int n, int v0, int v1, PQ * pq)
-{
-    int i, j, adjn;
+static int *triPath(tgraph g, int n, int v0, int v1, PQ *pq) {
+    int i, adjn;
     double d;
     tnode *np;
     tedge *e;
-    int *dad = N_NEW(n, int);
+    int *dad = gv_calloc(n, sizeof(int));
 
     for (i = 0; i < pq->PQsize; i++)
 	N_VAL(pq, i) = UNSEEN;
@@ -1310,19 +1121,22 @@ triPath(tgraph * g, int n, int v0, int v1, PQ * pq)
 	N_VAL(pq, i) *= -1;
 	if (i == v1)
 	    break;
-	np = g->nodes + i;
-	for (j = 0; j < np->ne; j++) {
-	    e = g->edges + np->edges[j];
+	np = g.nodes + i;
+	for (size_t j = 0; j < np->ne; j++) {
+	    e = g.edges + np->edges[j];
 	    if (e->t == i)
 		adjn = e->h;
 	    else
 		adjn = e->t;
 	    if (N_VAL(pq, adjn) < 0) {
 		d = -(N_VAL(pq, i) + E_WT(e));
-		if (N_VAL(pq, adjn) == UNSEEN) {
+		if (is_exactly_equal(N_VAL(pq, adjn), UNSEEN)) {
 		    N_VAL(pq, adjn) = d;
 		    N_DAD(adjn) = i;
-		    if (PQinsert(pq, adjn)) return NULL;
+		    if (PQinsert(pq, adjn)) {
+		       free(dad);
+		       return NULL;
+		    }
 		} else if (N_VAL(pq, adjn) < d) {
 		    PQupdate(pq, adjn, d);
 		    N_DAD(adjn) = i;
@@ -1333,13 +1147,11 @@ triPath(tgraph * g, int n, int v0, int v1, PQ * pq)
     return dad;
 }
 
-/* makeMultiSpline:
- * FIX: we don't really use the shortest path provided by ED_path,
+/* FIX: we don't really use the shortest path provided by ED_path,
  * so avoid in neato spline code.
  * Return 0 on success.
  */
-int makeMultiSpline(graph_t* g,  edge_t* e, router_t * rtr, int doPolyline)
-{
+int makeMultiSpline(edge_t* e, router_t * rtr, int doPolyline) {
     Ppolyline_t line = ED_path(e);
     node_t *t = agtail(e);
     node_t *h = aghead(e);
@@ -1350,11 +1162,16 @@ int makeMultiSpline(graph_t* g,  edge_t* e, router_t * rtr, int doPolyline)
     int *sp;
     int t_id = rtr->tn;
     int h_id = rtr->tn + 1;
-    int ecnt = rtr->tg->nedges;
+    int ecnt = rtr->tg.nedges;
     PPQ pq;
-    PQTYPE *idxs;
-    PQVTYPE *vals;
     int ret;
+
+    // record the number of edges in each node, so we can drop the added ones
+    // later
+    size_t *original_edge_count = gv_calloc(rtr->tg.nnodes,
+                                            sizeof(original_edge_count[0]));
+    for (size_t i = 0; i < rtr->tg.nnodes; ++i)
+        original_edge_count[i] = rtr->tg.nodes[i].ne;
 
 	/* Add endpoints to triangle graph */
     addEndpoint(rtr, t_p, t, t_id, ED_tail_port(e).side);
@@ -1362,8 +1179,8 @@ int makeMultiSpline(graph_t* g,  edge_t* e, router_t * rtr, int doPolyline)
 
 	/* Initialize priority queue */
     PQgen(&pq.pq, rtr->tn + 2, -1);
-    idxs = N_GNEW(pq.pq.PQsize + 1, PQTYPE);
-    vals = N_GNEW(pq.pq.PQsize + 1, PQVTYPE);
+    PQTYPE *idxs = gv_calloc(pq.pq.PQsize + 1, sizeof(PQTYPE));
+    PQVTYPE *vals = gv_calloc(pq.pq.PQsize + 1, sizeof(PQVTYPE));
     vals[0] = 0;
     pq.vals = vals + 1;
     pq.idxs = idxs + 1;
@@ -1381,11 +1198,12 @@ int makeMultiSpline(graph_t* g,  edge_t* e, router_t * rtr, int doPolyline)
 	free(sp);
 
 	/* Generate multiple splines using polygon */
-	ret = genroute(g, poly, 0, idx, e, doPolyline);
+	ret = genroute(poly, idx, e, doPolyline);
 	freeTripoly (poly);
     }
     else ret = -1;
 
-    resetGraph(rtr->tg, rtr->tn, ecnt);
+    resetGraph(rtr->tg, rtr->tn, ecnt, original_edge_count);
+    free(original_edge_count);
     return ret;
 }

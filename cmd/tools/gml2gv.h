@@ -1,50 +1,47 @@
-/* $Id$Revision: */
-/* vim:set shiftwidth=4 ts=8: */
+/**
+ * @file
+ * @brief <a href=https://en.wikipedia.org/wiki/Graph_Modelling_Language>GML</a>-DOT converter
+ */
 
 #include <stdio.h>
-#include <cgraph.h>
-
-#ifdef _WIN32
-#define strdup(x) _strdup(x)
-#endif
+#include <cgraph/cgraph.h>
+#include <util/list.h>
 
 typedef struct {
-    Dtlink_t link;
     unsigned short kind;
     unsigned short sort;
     char* name;
     union {
 	char* value;
-	Dt_t* lp;
+	void *lp; ///< actually an `attrs_t *`
     }u;
 } gmlattr;
 
+typedef LIST(gmlattr *) attrs_t;
+
 typedef struct {
-    Dtlink_t link;
     char* id;
-    Dt_t* attrlist;  
+    attrs_t attrlist;  
 } gmlnode;
 
 typedef struct {
-    Dtlink_t link;
     char* source;
     char* target;
-    Dt_t* attrlist;  
+    attrs_t attrlist;  
 } gmledge;
 
 typedef struct gmlgraph {
-    Dtlink_t link;
     struct gmlgraph* parent;
     int directed;
-    Dt_t* attrlist;  
-    Dt_t* nodelist;  
-    Dt_t* edgelist;  
-    Dt_t* graphlist;  
+    attrs_t attrlist;  
+    LIST(gmlnode *) nodelist;
+    LIST(gmledge *) edgelist;
+    LIST(struct gmlgraph *) graphlist;
 } gmlgraph;
 
 extern int gmllex(void);
 extern void gmllexeof(void);
-extern void gmlerror(char *);
+extern void gmlerror(const char *);
 extern int gmlerrors(void);
 extern void initgmlscan (FILE*);
 extern Agraph_t* gml_to_gv (char*, FILE*, int, int*);

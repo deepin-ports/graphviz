@@ -1,35 +1,30 @@
-/* $Id$ $Revision$ */
-/* vim:set shiftwidth=4 ts=8: */
-
 /*************************************************************************
  * Copyright (c) 2011 AT&T Intellectual Property 
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
- * http://www.eclipse.org/legal/epl-v10.html
+ * https://www.eclipse.org/legal/epl-v10.html
  *
- * Contributors: See CVS logs. Details at http://www.graphviz.org/
+ * Contributors: Details at https://graphviz.org
  *************************************************************************/
 
 #include "config.h"
 
-#include "gvplugin_device.h"
+#include <gvc/gvplugin_device.h>
 
 #include "gvplugin_quartz.h"
+#include <stdbool.h>
+#include <util/gv_math.h>
 
 #if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ >= 1040 && defined(HAVE_PANGOCAIRO)
 
-const void *memory_data_consumer_get_byte_pointer(void *info)
+static const void *memory_data_consumer_get_byte_pointer(void *info)
 {
 	return info;
 }
 
-CGDataProviderDirectCallbacks memory_data_provider_callbacks = {
-	0,
-	memory_data_consumer_get_byte_pointer,
-	NULL,
-	NULL,
-	NULL
+static CGDataProviderDirectCallbacks memory_data_provider_callbacks = {
+    .getBytePointer = memory_data_consumer_get_byte_pointer,
 };
 
 static void quartz_format(GVJ_t *job)
@@ -37,9 +32,21 @@ static void quartz_format(GVJ_t *job)
 	/* image destination -> data consumer -> job's gvdevice */
 	/* data provider <- job's imagedata */
 	CGDataConsumerRef data_consumer = CGDataConsumerCreate(job, &device_data_consumer_callbacks);
-	CGImageDestinationRef image_destination = CGImageDestinationCreateWithDataConsumer(data_consumer, format_to_uti(job->device.id), 1, NULL);
+	CGImageDestinationRef image_destination =
+	  CGImageDestinationCreateWithDataConsumer(data_consumer,
+	    format_to_uti((format_type)job->device.id), 1, NULL);
 	CGDataProviderRef data_provider = CGDataProviderCreateDirect(job->imagedata, BYTES_PER_PIXEL * job->width * job->height, &memory_data_provider_callbacks);
 	
+	const void *keys[] = {kCGImagePropertyDPIWidth, kCGImagePropertyDPIHeight};
+	const void *values[] = {
+		CFNumberCreate(NULL, kCFNumberDoubleType, &job->dpi.x),
+		CFNumberCreate(NULL, kCFNumberDoubleType, &job->dpi.y)
+	};
+	CFDictionaryRef dpi = CFDictionaryCreate(NULL, keys, values,
+	                                         sizeof(keys) / sizeof(keys[0]),
+	                                         &kCFTypeDictionaryKeyCallBacks,
+	                                         &kCFTypeDictionaryValueCallBacks);
+
 	/* add the bitmap image to the destination and save it */
 	CGColorSpaceRef color_space = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
 	CGImageRef image = CGImageCreate (
@@ -52,10 +59,10 @@ static void quartz_format(GVJ_t *job)
 		kCGImageAlphaPremultipliedFirst|kCGBitmapByteOrder32Little,	/* bitmap info: corresponds to CAIRO_FORMAT_ARGB32 */
 		data_provider,						/* data provider: from imagedata */
 		NULL,								/* decode: don't remap colors */
-		FALSE,								/* don't interpolate */
+		false, // don't interpolate
 		kCGRenderingIntentDefault			/* rendering intent (what to do with out-of-gamut colors): default */
 	);
-	CGImageDestinationAddImage(image_destination, image, NULL);
+	CGImageDestinationAddImage(image_destination, image, dpi);
 	CGImageDestinationFinalize(image_destination);
 	
 	/* clean up */
@@ -64,6 +71,8 @@ static void quartz_format(GVJ_t *job)
 	CGDataProviderRelease(data_provider);
 	if (image_destination)
 		CFRelease(image_destination);
+	if (dpi != NULL)
+		CFRelease(dpi);
 	CGDataConsumerRelease(data_consumer);
 }
 

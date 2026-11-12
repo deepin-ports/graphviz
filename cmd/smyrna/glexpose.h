@@ -1,34 +1,21 @@
-/* $Id$Revision: */
-/* vim:set shiftwidth=4 ts=8: */
-
 /*************************************************************************
- * Copyright (c) 2011 AT&T Intellectual Property 
+ * Copyright (c) 2011 AT&T Intellectual Property
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
- * http://www.eclipse.org/legal/epl-v10.html
+ * https://www.eclipse.org/legal/epl-v10.html
  *
- * Contributors: See CVS logs. Details at http://www.graphviz.org/
+ * Contributors: Details at https://graphviz.org
  *************************************************************************/
 
-#ifndef GLEXPOSE_H
-#define GLEXPOSE_H
+#pragma once
 
 #include "viewport.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-    /* int glupdatecamera(ViewInfo * v); */
-    int glexpose_main(ViewInfo * v);
-    /* void glexpose_grid(ViewInfo * v); */
-    /* int glexpose_drawgraph(ViewInfo * view); */
-    void drawRotatingTools(void);
-    /* void drawtestpoly(void); */
-    /* void draw_cube(void); */
-
-#ifdef __cplusplus
-}				/* end extern "C" */
-#endif
-#endif
+/// any time screen needs to be redrawn, this function is called by gltemplate
+///
+/// All drawings are initialized in this function.
+///
+/// @param v Global view variable defined in viewport.c
+/// @return 0 if something goes wrong with GL, 1 otherwise
+int glexpose_main(ViewInfo *vi);

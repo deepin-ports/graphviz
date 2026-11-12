@@ -1,0 +1,21 @@
+#!/bin/sh
+
+set -e
+
+# Remove the old configuration file if present, see README.Debian-packaging
+# Needed only in libgraphivzN
+if [ -f /usr/lib/graphviz/config ]; then
+	rm -f /usr/lib/graphviz/config6
+fi
+if [ -f /usr/lib/graphviz/config6a ]; then
+	rm -f /usr/lib/graphviz/config6a
+fi
+
+if test "$1" = configure && dpkg --compare-versions "$2" lt 8.1.0-1 && ! dpkg-query -f '${Status}' -W graphviz | egrep -q 'installed|triggers-awaited|triggers-pending'; then
+	# If we upgrade from a pre-trigger version of graphviz and graphviz is absent, we must delete the config file.
+	if [ -f /usr/lib/@TRIPLET@/graphviz/config6a ]; then
+		rm -f /usr/lib/@TRIPLET@/graphviz/config6a
+	fi
+fi
+
+#DEBHELPER#

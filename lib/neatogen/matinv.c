@@ -1,14 +1,11 @@
-/* $Id$ $Revision$ */
-/* vim:set shiftwidth=4 ts=8: */
-
 /*************************************************************************
  * Copyright (c) 2011 AT&T Intellectual Property 
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
- * http://www.eclipse.org/legal/epl-v10.html
+ * https://www.eclipse.org/legal/epl-v10.html
  *
- * Contributors: See CVS logs. Details at http://www.graphviz.org/
+ * Contributors: Details at https://graphviz.org
  *************************************************************************/
 
 /*
@@ -34,22 +31,24 @@
  *	n    - the order of the matrices A and Ainv
  */
 
+#include "config.h"
+
 #include <stdlib.h>
-#include "render.h"
-extern int lu_decompose(double **a, int n);
-extern void lu_solve(double *x, double *b, int n);
+#include <common/render.h>
+#include <neatogen/neato.h>
+#include <util/alloc.h>
+#include <util/gv_math.h>
 
 int matinv(double **A, double **Ainv, int n)
 {
-    register int i, j;
-    double *b, temp;
+    int i, j;
 
     /* Decompose matrix into L and U triangular matrices */
     if (lu_decompose(A, n) == 0)
 	return (0);		/* Singular */
 
     /* Invert matrix by solving n simultaneous equations n times */
-    b = N_NEW(n, double);
+    double *b = gv_calloc(n, sizeof(double));
     for (i = 0; i < n; i++) {
 	for (j = 0; j < n; j++)
 	    b[j] = 0.0;
@@ -61,9 +60,7 @@ int matinv(double **A, double **Ainv, int n)
     /* Transpose matrix */
     for (i = 0; i < n; i++) {
 	for (j = 0; j < i; j++) {
-	    temp = Ainv[i][j];
-	    Ainv[i][j] = Ainv[j][i];
-	    Ainv[j][i] = temp;
+	    SWAP(&Ainv[i][j], &Ainv[j][i]);
 	}
     }
 

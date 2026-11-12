@@ -1,102 +1,54 @@
-/* $Id$ $Revision$ */
-/* vim:set shiftwidth=4 ts=8: */
-
 /*************************************************************************
  * Copyright (c) 2011 AT&T Intellectual Property 
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
- * http://www.eclipse.org/legal/epl-v10.html
+ * https://www.eclipse.org/legal/epl-v10.html
  *
- * Contributors: See CVS logs. Details at http://www.graphviz.org/
+ * Contributors: Details at https://graphviz.org
  *************************************************************************/
 
 #include "config.h"
-
-#include <stdarg.h>
+#include <assert.h>
+#include <math.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
-#include <ctype.h>
 
-#ifdef _WIN32
-#include <io.h>
-#include "compat.h"
-#endif
+#include <common/macros.h>
+#include <common/const.h>
 
-#include "macros.h"
-#include "const.h"
-
-#include "gvplugin_render.h"
-#include "gvplugin_device.h"
-#include "gvio.h"
-#include "agxbuf.h"
-#include "utils.h"
-#include "color.h"
+#include <gvc/gvplugin_render.h>
+#include <gvc/gvplugin_device.h>
+#include <gvc/gvio.h>
+#include <common/utils.h>
+#include <common/color.h>
+#include <util/agxbuf.h>
+#include <util/prisize_t.h>
+#include <util/streq.h>
+#include <util/unreachable.h>
 
 /* Number of points to split splines into */
 #define BEZIERSUBDIVISION 6
 
-typedef enum { FORMAT_FIG, } format_type;
+enum { FORMAT_FIG, };
 
 static int Depth;
 
-static void figptarray(GVJ_t *job, pointf * A, int n, int close)
-{
-    int i;
-    point p;
-
-    for (i = 0; i < n; i++) {
-	PF2P(A[i],p);
-        gvprintf(job, " %d %d", p.x, p.y);
+static void figptarray(GVJ_t *job, pointf *A, size_t n, int close) {
+    for (size_t i = 0; i < n; i++) {
+        gvprintf(job, " %.0f %.0f", A[i].x, A[i].y);
     }
     if (close) {
-	PF2P(A[0],p);
-        gvprintf(job, " %d %d", p.x, p.y);
+        gvprintf(job, " %.0f %.0f", A[0].x, A[0].y);
     }
     gvputs(job, "\n");
 }
 
-static char *fig_string(char *s)
+static int figColorResolve(bool *new, unsigned char r, unsigned char g,
+  unsigned char b)
 {
-    static char *buf = NULL;
-    static int bufsize = 0;
-    int pos = 0;
-    char *p;
-    unsigned char c;
-
-    if (!buf) {
-        bufsize = 64;
-        buf = malloc(bufsize * sizeof(char));
-    }
-
-    p = buf;
-    while ((c = *s++)) {
-        if (pos > (bufsize - 8)) {
-            bufsize *= 2;
-            buf = realloc(buf, bufsize * sizeof(char));
-            p = buf + pos;
-        }
-        if (isascii(c)) {
-            if (c == '\\') {
-                *p++ = '\\';
-                pos++;
-            }
-            *p++ = c;
-            pos++;
-        } else {
-            *p++ = '\\';
-            sprintf(p, "%03o", c);
-            p += 3;
-            pos += 4;
-        }
-    }
-    *p = '\0';
-    return buf;
-}
-
-static int figColorResolve(int *new, int r, int g, int b)
-{
-#define maxColors 256
+#define maxColors 512
     static int top = 0;
     static short red[maxColors], green[maxColors], blue[maxColors];
     int c;
@@ -104,7 +56,7 @@ static int figColorResolve(int *new, int r, int g, int b)
     long rd, gd, bd, dist;
     long mindist = 3 * 255 * 255;       /* init to max poss dist */
 
-    *new = 0;                   /* in case it is not a new color */
+    *new = false; // in case it is not a new color
     for (c = 0; c < top; c++) {
         rd = (long) (red[c] - r);
         gd = (long) (green[c] - g);
@@ -118,24 +70,24 @@ static int figColorResolve(int *new, int r, int g, int b)
         }
     }
     /* no exact match.  We now know closest, but first try to allocate exact */
-    if (top++ == maxColors)
+    if (top == maxColors)
         return ct;              /* Return closest available color */
+    ++top;
     red[c] = r;
     green[c] = g;
     blue[c] = b;
-    *new = 1;                   /* flag new color */
+    *new = true; // flag new color
     return c;                   /* Return newly allocated color */
 }
 
 /* this table is in xfig color index order */
-static char *figcolor[] = {
-    "black", "blue", "green", "cyan", "red", "magenta", "yellow", "white", (char *) NULL
-};
+static char *figcolor[] = {"black",   "blue",   "green", "cyan", "red",
+                           "magenta", "yellow", "white", NULL};
 
 static void fig_resolve_color(GVJ_t *job, gvcolor_t * color)
 {
     int object_code = 0;        /* always 0 for color */
-    int i, new;
+    int i;
 
     switch (color->type) {
 	case COLOR_STRING:
@@ -146,7 +98,8 @@ static void fig_resolve_color(GVJ_t *job, gvcolor_t * color)
 		}
 	    }
 	    break;
-	case RGBA_BYTE:
+	case RGBA_BYTE: {
+	    bool new;
 	    i = 32 + figColorResolve(&new,
 			color->u.rgba[0],
 			color->u.rgba[1],
@@ -159,8 +112,9 @@ static void fig_resolve_color(GVJ_t *job, gvcolor_t * color)
 			color->u.rgba[2]);
 	    color->u.index = i;
 	    break;
+	}
 	default:
-	    assert(0);	/* internal error */
+	    UNREACHABLE(); // internal error
     }
 
     color->type = COLOR_INDEX;
@@ -217,26 +171,36 @@ static void fig_end_graph(GVJ_t * job)
 
 static void fig_begin_page(GVJ_t * job)
 {
+    (void)job;
+
     Depth = 2;
 }
 
 static void fig_begin_node(GVJ_t * job)
 {
+    (void)job;
+
     Depth = 1;
 }
 
 static void fig_end_node(GVJ_t * job)
 {
+    (void)job;
+
     Depth = 2;
 }
 
 static void fig_begin_edge(GVJ_t * job)
 {
+    (void)job;
+
     Depth = 0;
 }
 
 static void fig_end_edge(GVJ_t * job)
 {
+    (void)job;
+
     Depth = 2;
 }
 
@@ -259,7 +223,8 @@ static void fig_textspan(GVJ_t * job, pointf p, textspan_t * span)
  * so the node sizes may be wrong.
  */
     double height = font_size;
-    double length = 2.0*font_size/3.0  * (double)strlen(span->str) / 2.0;
+    const size_t span_length = strlen(span->str);
+    const double length = 2.0 * font_size / 3.0  * (double)span_length / 2.0;
 
     pA = span->font->postscript_alias;
     if (pA) /* if it is a standard postscript font */
@@ -285,10 +250,12 @@ static void fig_textspan(GVJ_t * job, pointf p, textspan_t * span)
 	$A	\\in	M_0$\001
 */
     gvprintf(job,
-            "%d %d %d %d %d %d %.1f %.4f %d %.1f %.1f %d %d %s\\001\n",
+            "%d %d %d %d %d %d %.1f %.4f %d %.1f %.1f %.0f %.0f ",
             object_code, sub_type, color, depth, pen_style, font,
-            font_size, angle, font_flags, height, length, ROUND(p.x), ROUND((p.y-72.0)),
-            fig_string(span->str));
+            font_size, angle, font_flags, height, length, round(p.x),
+            round(p.y - 72.0));
+    gvputs_nonascii(job, span->str);
+    gvputs(job, "\\001\n");
 }
 
 static void fig_ellipse(GVJ_t * job, pointf * A, int filled)
@@ -298,7 +265,7 @@ static void fig_ellipse(GVJ_t * job, pointf * A, int filled)
     int object_code = 1;        /* always 1 for ellipse */
     int sub_type = 1;           /* ellipse defined by radii */
     int line_style;		/* solid, dotted, dashed */
-    int thickness = obj->penwidth;
+    double thickness = round(obj->penwidth);
     int pen_color = obj->pencolor.u.index;
     int fill_color = obj->fillcolor.u.index;
     int depth = Depth;
@@ -307,35 +274,33 @@ static void fig_ellipse(GVJ_t * job, pointf * A, int filled)
     double style_val;
     int direction = 0;
     double angle = 0.0;
-    int center_x, center_y, radius_x, radius_y;
-    int start_x, start_y, end_x, end_y;
+    double center_x, center_y;
 
     fig_line_style(obj, &line_style, &style_val);
 
-    start_x = center_x = ROUND(A[0].x);
-    start_y = center_y = ROUND(A[0].y);
-    radius_x = ROUND(A[1].x - A[0].x);
-    radius_y = ROUND(A[1].y - A[0].y);
-    end_x = ROUND(A[1].x);
-    end_y = ROUND(A[1].y);
+    const double start_x = center_x = round(A[0].x);
+    const double start_y = center_y = round(A[0].y);
+    const double radius_x = round(A[1].x - A[0].x);
+    const double radius_y = round(A[1].y - A[0].y);
+    const double end_x = round(A[1].x);
+    const double end_y = round(A[1].y);
 
     gvprintf(job,
-            "%d %d %d %d %d %d %d %d %d %.3f %d %.4f %d %d %d %d %d %d %d %d\n",
+            "%d %d %d %.0f %d %d %d %d %d %.3f %d %.4f %.0f %.0f %.0f %.0f "
+            "%.0f %.0f %.0f %.0f\n",
             object_code, sub_type, line_style, thickness, pen_color,
             fill_color, depth, pen_style, area_fill, style_val, direction,
             angle, center_x, center_y, radius_x, radius_y, start_x,
             start_y, end_x, end_y);
 }
 
-static void fig_bezier(GVJ_t * job, pointf * A, int n, int arrow_at_start,
-	      int arrow_at_end, int filled)
-{
+static void fig_bezier(GVJ_t *job, pointf *A, size_t n, int filled) {
     obj_state_t *obj = job->obj;
 
     int object_code = 3;        /* always 3 for spline */
     int sub_type;
     int line_style;		/* solid, dotted, dashed */
-    int thickness = obj->penwidth;
+    double thickness = round(obj->penwidth);
     int pen_color = obj->pencolor.u.index;
     int fill_color = obj->fillcolor.u.index;
     int depth = Depth;
@@ -345,24 +310,13 @@ static void fig_bezier(GVJ_t * job, pointf * A, int n, int arrow_at_start,
     int cap_style = 0;
     int forward_arrow = 0;
     int backward_arrow = 0;
-    int npoints = n;
-    int i;
-
 
     pointf pf, V[4];
-    point p;
-    int j, step;
+    int step;
     int count = 0;
-    int size;
 
-    char *buffer;
-    char *buf;
+    agxbuf buf = {0};
     assert (n >= 4);
-
-	buffer =
-        malloc((npoints + 1) * (BEZIERSUBDIVISION +
-                                1) * 20 * sizeof(char));
-    buf = buffer;
 
     fig_line_style(obj, &line_style, &style_val);
 
@@ -380,26 +334,22 @@ static void fig_bezier(GVJ_t * job, pointf * A, int n, int arrow_at_start,
     V[3].y = A[0].y;
     /* Write first point in line */
     count++;
-    PF2P(A[0], p);
-    size = sprintf(buf, " %d %d", p.x, p.y);
-    buf += size;
+    agxbprint(&buf, " %.0f %.0f", A[0].x, A[0].y);
     /* write subsequent points */
-    for (i = 0; i + 3 < n; i += 3) {
+    for (size_t i = 0; i + 3 < n; i += 3) {
         V[0] = V[3];
-        for (j = 1; j <= 3; j++) {
+        for (size_t j = 1; j <= 3; j++) {
             V[j].x = A[i + j].x;
             V[j].y = A[i + j].y;
         }
         for (step = 1; step <= BEZIERSUBDIVISION; step++) {
             count++;
-            pf = Bezier (V, 3, (double) step / BEZIERSUBDIVISION, NULL, NULL);
-	    PF2P(pf, p);
-            size = sprintf(buf, " %d %d", p.x, p.y);
-            buf += size;
+            pf = Bezier(V, (double)step / BEZIERSUBDIVISION, NULL, NULL);
+            agxbprint(&buf, " %.0f %.0f", pf.x, pf.y);
         }
     }
 
-    gvprintf(job, "%d %d %d %d %d %d %d %d %d %.1f %d %d %d %d\n",
+    gvprintf(job, "%d %d %d %.0f %d %d %d %d %d %.1f %d %d %d %d\n",
             object_code,
             sub_type,
             line_style,
@@ -411,22 +361,21 @@ static void fig_bezier(GVJ_t * job, pointf * A, int n, int arrow_at_start,
             area_fill,
             style_val, cap_style, forward_arrow, backward_arrow, count);
 
-    gvprintf(job, " %s\n", buffer);      /* print points */
-    free(buffer);
-    for (i = 0; i < count; i++) {
+    gvprintf(job, " %s\n", agxbuse(&buf));      /* print points */
+    agxbfree(&buf);
+    for (int i = 0; i < count; i++) {
         gvprintf(job, " %d", i % (count - 1) ? 1 : 0);   /* -1 on all */
     }
     gvputs(job, "\n");
 }
 
-static void fig_polygon(GVJ_t * job, pointf * A, int n, int filled)
-{
+static void fig_polygon(GVJ_t *job, pointf *A, size_t n, int filled) {
     obj_state_t *obj = job->obj;
 
     int object_code = 2;        /* always 2 for polyline */
     int sub_type = 3;           /* always 3 for polygon */
     int line_style;		/* solid, dotted, dashed */
-    int thickness = obj->penwidth;
+    double thickness = round(obj->penwidth);
     int pen_color = obj->pencolor.u.index;
     int fill_color = obj->fillcolor.u.index;
     int depth = Depth;
@@ -438,26 +387,25 @@ static void fig_polygon(GVJ_t * job, pointf * A, int n, int filled)
     int radius = 0;
     int forward_arrow = 0;
     int backward_arrow = 0;
-    int npoints = n + 1;
+    const size_t npoints = n + 1;
 
     fig_line_style(obj, &line_style, &style_val);
 
     gvprintf(job,
-            "%d %d %d %d %d %d %d %d %d %.1f %d %d %d %d %d %d\n",
+            "%d %d %d %.0f %d %d %d %d %d %.1f %d %d %d %d %d %" PRISIZE_T "\n",
             object_code, sub_type, line_style, thickness, pen_color,
             fill_color, depth, pen_style, area_fill, style_val, join_style,
             cap_style, radius, forward_arrow, backward_arrow, npoints);
-    figptarray(job, A, n, 1);        /* closed shape */
+    figptarray(job, A, n, 1); // closed shape
 }
 
-static void fig_polyline(GVJ_t * job, pointf * A, int n)
-{
+static void fig_polyline(GVJ_t *job, pointf *A, size_t n) {
     obj_state_t *obj = job->obj;
 
     int object_code = 2;        /* always 2 for polyline */
     int sub_type = 1;           /* always 1 for polyline */
     int line_style;		/* solid, dotted, dashed */
-    int thickness = obj->penwidth;
+    double thickness = round(obj->penwidth);
     int pen_color = obj->pencolor.u.index;
     int fill_color = 0;
     int depth = Depth;
@@ -469,19 +417,19 @@ static void fig_polyline(GVJ_t * job, pointf * A, int n)
     int radius = 0;
     int forward_arrow = 0;
     int backward_arrow = 0;
-    int npoints = n;
+    const size_t npoints = n;
 
     fig_line_style(obj, &line_style, &style_val);
 
     gvprintf(job,
-            "%d %d %d %d %d %d %d %d %d %.1f %d %d %d %d %d %d\n",
+            "%d %d %d %.0f %d %d %d %d %d %.1f %d %d %d %d %d %" PRISIZE_T "\n",
             object_code, sub_type, line_style, thickness, pen_color,
             fill_color, depth, pen_style, area_fill, style_val, join_style,
             cap_style, radius, forward_arrow, backward_arrow, npoints);
-    figptarray(job, A, n, 0);        /* open shape */
+    figptarray(job, A, n, 0); // open shape
 }
 
-gvrender_engine_t fig_engine = {
+static gvrender_engine_t fig_engine = {
     0,				/* fig_begin_job */
     0,				/* fig_end_job */
     fig_begin_graph,
@@ -520,8 +468,7 @@ static char *fig_knowncolors[] = {
     "black", "blue", "cyan", "green", "magenta", "red", "white", "yellow",
 };
 
-
-gvrender_features_t render_features_fig = {
+static gvrender_features_t render_features_fig = {
     EMIT_COLORS
 	| GVRENDER_Y_GOES_DOWN,	/* flags */
     4.,                         /* default pad - graph units */
@@ -530,7 +477,7 @@ gvrender_features_t render_features_fig = {
     RGBA_BYTE,			/* color_type */
 };
 
-gvdevice_features_t device_features_fig = {
+static gvdevice_features_t device_features_fig = {
     EMIT_COLORS
 	| GVRENDER_Y_GOES_DOWN,	/* flags */
     {0.,0.},			/* default margin - points */

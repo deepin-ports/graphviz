@@ -1,73 +1,72 @@
-/* $Id$ $Revision$ */
-/* vim:set shiftwidth=4 ts=8: */
-
 /*************************************************************************
  * Copyright (c) 2011 AT&T Intellectual Property 
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
- * http://www.eclipse.org/legal/epl-v10.html
+ * https://www.eclipse.org/legal/epl-v10.html
  *
- * Contributors: See CVS logs. Details at http://www.graphviz.org/
+ * Contributors: Details at https://graphviz.org
  *************************************************************************/
-
 
 #include "config.h"
 
-#include "neato.h"
-#include "adjust.h"
-#include "pathplan.h"
-#include "vispath.h"
-#include "multispline.h"
-#ifndef HAVE_DRAND48
-extern double drand48(void);
-#endif
+#include <assert.h>
+#include "config.h"
+#include <limits.h>
+#include <math.h>
+#include <neatogen/neato.h>
+#include <neatogen/adjust.h>
+#include <pathplan/pathplan.h>
+#include <pathplan/vispath.h>
+#include <neatogen/multispline.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <util/alloc.h>
+#include <util/gv_math.h>
+#include <util/unreachable.h>
 
 #ifdef ORTHO
-#include <ortho.h>
+#include <ortho/ortho.h>
 #endif
 
-extern void printvis(vconfig_t * cp);
-extern int in_poly(Ppoly_t argpoly, Ppoint_t q);
 
-
-static boolean spline_merge(node_t * n)
+static bool spline_merge(node_t * n)
 {
-    return FALSE;
+    (void)n;
+    return false;
 }
 
-static boolean swap_ends_p(edge_t * e)
+static bool swap_ends_p(edge_t * e)
 {
-    return FALSE;
+    (void)e;
+    return false;
 }
 
-static splineInfo sinfo = { swap_ends_p, spline_merge };
+static splineInfo sinfo = {.swapEnds = swap_ends_p,
+                           .splineMerge = spline_merge};
 
-static void
-make_barriers(Ppoly_t ** poly, int npoly, int pp, int qp,
-	      Pedge_t ** barriers, int *n_barriers)
-{
-    int i, j, k, n, b;
-    Pedge_t *bar;
+static void make_barriers(Ppoly_t **poly, int npoly, int pp, int qp,
+                          Pedge_t **barriers, size_t *n_barriers) {
+    int i, j, k;
 
-    n = 0;
+    size_t n = 0;
     for (i = 0; i < npoly; i++) {
 	if (i == pp)
 	    continue;
 	if (i == qp)
 	    continue;
-	n = n + poly[i]->pn;
+	n += poly[i]->pn;
     }
-    bar = N_GNEW(n, Pedge_t);
-    b = 0;
+    Pedge_t *bar = gv_calloc(n, sizeof(Pedge_t));
+    size_t b = 0;
     for (i = 0; i < npoly; i++) {
 	if (i == pp)
 	    continue;
 	if (i == qp)
 	    continue;
-	for (j = 0; j < poly[i]->pn; j++) {
+	for (j = 0; j < (int)poly[i]->pn; j++) {
 	    k = j + 1;
-	    if (k >= poly[i]->pn)
+	    if (k >= (int)poly[i]->pn)
 		k = 0;
 	    bar[b].a = poly[i]->ps[j];
 	    bar[b].b = poly[i]->ps[k];
@@ -79,8 +78,6 @@ make_barriers(Ppoly_t ** poly, int npoly, int pp, int qp,
     *n_barriers = n;
 }
 
-/* genPt:
- */
 static Ppoint_t genPt(double x, double y, pointf c)
 {
     Ppoint_t p;
@@ -90,15 +87,12 @@ static Ppoint_t genPt(double x, double y, pointf c)
     return p;
 }
 
-
-/* recPt:
- */
 static Ppoint_t recPt(double x, double y, pointf c, expand_t* m)
 {
     Ppoint_t p;
 
-    p.x = (x * m->x) + c.x;
-    p.y = (y * m->y) + c.y;
+    p.x = x * m->x + c.x;
+    p.y = y * m->y + c.y;
     return p;
 }
 
@@ -114,12 +108,12 @@ typedef struct {
     edge_t *e;
 } edgeitem;
 
-static void *newitem(Dt_t * d, edgeitem * obj, Dtdisc_t * disc)
-{
+static void *newitem(void *p, Dtdisc_t *disc) {
+    edgeitem *obj = p;
     edgeitem *newp;
 
-    NOTUSED(disc);
-    newp = NEW(edgeitem);
+    (void)disc;
+    newp = gv_alloc(sizeof(edgeitem));
     newp->id = obj->id;
     newp->e = obj->e;
     ED_count(newp->e) = 1;
@@ -127,16 +121,9 @@ static void *newitem(Dt_t * d, edgeitem * obj, Dtdisc_t * disc)
     return newp;
 }
 
-static void freeitem(Dt_t * d, edgeitem * obj, Dtdisc_t * disc)
-{
-    free(obj);
-}
-
-static int
-cmpitems(Dt_t * d, edgeinfo * key1, edgeinfo * key2, Dtdisc_t * disc)
-{
-    int x;
-
+static int cmpitems(void *k1, void *k2) {
+    const edgeinfo *key1 = k1;
+    const edgeinfo *key2 = k2;
     if (key1->n1 > key2->n1)
 	return 1;
     if (key1->n1 < key2->n1)
@@ -146,29 +133,35 @@ cmpitems(Dt_t * d, edgeinfo * key1, edgeinfo * key2, Dtdisc_t * disc)
     if (key1->n2 < key2->n2)
 	return -1;
 
-    if ((x = key1->p1.x - key2->p1.x))
-	return x;
-    if ((x = key1->p1.y - key2->p1.y))
-	return x;
-    if ((x = key1->p2.x - key2->p2.x))
-	return x;
-    return (key1->p2.y - key2->p2.y);
+    if (key1->p1.x > key2->p1.x)
+	return 1;
+    if (key1->p1.x < key2->p1.x)
+	return -1;
+    if (key1->p1.y > key2->p1.y)
+	return 1;
+    if (key1->p1.y < key2->p1.y)
+	return -1;
+    if (key1->p2.x > key2->p2.x)
+	return 1;
+    if (key1->p2.x < key2->p2.x)
+	return -1;
+    if (key1->p2.y > key2->p2.y)
+	return 1;
+    if (key1->p2.y < key2->p2.y)
+	return -1;
+    return 0;
 }
 
 Dtdisc_t edgeItemDisc = {
     offsetof(edgeitem, id),
     sizeof(edgeinfo),
     offsetof(edgeitem, link),
-    (Dtmake_f) newitem,
-    (Dtfree_f) freeitem,
-    (Dtcompar_f) cmpitems,
-    0,
-    0,
-    0
+    newitem,
+    free,
+    cmpitems,
 };
 
-/* equivEdge:
- * See if we have already encountered an edge between the same
+/* See if we have already encountered an edge between the same
  * node:port pairs. If so, return the earlier edge. If not, 
  * this edge is added to map and returned.
  * We first have to canonicalize the key fields using a lexicographic
@@ -217,32 +210,31 @@ static edge_t *equivEdge(Dt_t * map, edge_t * e)
 }
 
 
-/* makeSelfArcs:
- * Generate loops. We use the library routine makeSelfEdge
+/* Generate loops. We use the library routine makeSelfEdge
  * which also places the labels.
  * We have to handle port labels here.
  * as well as update the bbox from edge labels.
  */
-void makeSelfArcs(path * P, edge_t * e, int stepx)
+void makeSelfArcs(edge_t * e, int stepx)
 {
-    int cnt = ED_count(e);
+    assert(ED_count(e) >= 0);
+    const size_t cnt = (size_t)ED_count(e);
 
-    if ((cnt == 1) || Concentrate) {
+    if (cnt == 1 || Concentrate) {
 	edge_t *edges1[1];
 	edges1[0] = e;
-	makeSelfEdge(P, edges1, 0, 1, stepx, stepx, &sinfo);
+	makeSelfEdge(edges1, 1, stepx, stepx, &sinfo);
 	if (ED_label(e))
 	    updateBB(agraphof(agtail(e)), ED_label(e));
 	makePortLabels(e);
-    } else {
-	int i;
-	edge_t **edges = N_GNEW(cnt, edge_t *);
-	for (i = 0; i < cnt; i++) {
+    } else if (cnt > 1) {
+	edge_t **edges = gv_calloc(cnt, sizeof(edge_t*));
+	for (size_t i = 0; i < cnt; i++) {
 	    edges[i] = e;
 	    e = ED_to_virt(e);
 	}
-	makeSelfEdge(P, edges, 0, cnt, stepx, stepx, &sinfo);
-	for (i = 0; i < cnt; i++) {
+	makeSelfEdge(edges, cnt, stepx, stepx, &sinfo);
+	for (size_t i = 0; i < cnt; i++) {
 	    e = edges[i];
 	    if (ED_label(e))
 		updateBB(agraphof(agtail(e)), ED_label(e));
@@ -252,8 +244,75 @@ void makeSelfArcs(path * P, edge_t * e, int stepx)
     }
 }
 
-/* makeObstacle:
- * Given a node, return an obstacle reflecting the
+/** calculate the slope of the tangent of an ellipse
+ *
+ * The equation for the slope `m` of the tangent of an ellipse as a function of
+ * `x` * is given by:
+ *
+ *           bx
+ * m = ± ――――――――――
+ *          _______
+ *       a √ a²- x²
+ *
+ * or
+ *
+ * m = ± (b * x) / (a * sqrt(a * a - x * x))
+ *
+ * We know that the slope is negative in the first and third quadrant, i.e.,
+ * when the signs of x and y are the same, so we use that to select the correct
+ * slope.
+ *
+ * @param a Half the width of the ellipse, i.e., the maximum x value
+ * @param b Half the height of the ellipse, i.e., the maximum y value
+ * @param p A point on the ellipse periphery in which to calculate the slope of
+ * the tangent
+ * @return The slope of the tangent in point `p`
+ */
+static double ellipse_tangent_slope(double a, double b, pointf p) {
+  assert(p.x != a &&
+         "cannot handle ellipse tangent slope in horizontal extreme point");
+  const double sign_y = p.y >= 0 ? 1 : -1;
+  const double m = -sign_y * (b * p.x) / (a * sqrt(a * a - p.x * p.x));
+  assert(isfinite(m) && "ellipse tangent slope is infinite");
+  return m;
+}
+
+/** calculate the intersection of two lines
+ *
+ * @param l0 First line
+ * @param l1 Second line
+ * @return Intersection of the two lines
+ */
+static pointf line_intersection(linef l0, linef l1) {
+  const double x =
+      (l0.m * l0.p.x - l0.p.y - l1.m * l1.p.x + l1.p.y) / (l0.m - l1.m);
+  const double y = l0.p.y + l0.m * (x - l0.p.x);
+  return (pointf){x, y};
+}
+
+/** calculate a corner of a polygon circumscribed about an ellipse
+ *
+ * @param a Half the width of the ellipse, i.e., the maximum x value
+ * @param b Half the height of the ellipse, i.e., the maximum y value
+ * @param i Index of the polygon corner
+ * @param nsides Number of sides of the polygon
+ * @return Polygon corner at index `i`
+ */
+static pointf circumscribed_polygon_corner_about_ellipse(double a, double b,
+                                                         size_t i,
+                                                         size_t nsides) {
+  const double angle0 = 2.0 * M_PI * ((double)i - 0.5) / (double)nsides;
+  const double angle1 = 2.0 * M_PI * ((double)i + 0.5) / (double)nsides;
+  const pointf p0 = {a * cos(angle0), b * sin(angle0)};
+  const pointf p1 = {a * cos(angle1), b * sin(angle1)};
+  const double m0 = ellipse_tangent_slope(a, b, p0);
+  const double m1 = ellipse_tangent_slope(a, b, p1);
+  const linef line0 = {{p0.x, p0.y}, m0};
+  const linef line1 = {{p1.x, p1.y}, m1};
+  return line_intersection(line0, line1);
+}
+
+/* Given a node, return an obstacle reflecting the
  * node's geometry. pmargin specifies how much space to allow
  * around the polygon. 
  * Returns the constructed polygon on success, NULL on failure.
@@ -264,37 +323,34 @@ void makeSelfArcs(path * P, edge_t * e, int stepx)
  * The polygon has its vertices in CW order.
  * 
  */
-Ppoly_t *makeObstacle(node_t * n, expand_t* pmargin, boolean isOrtho)
+Ppoly_t *makeObstacle(node_t * n, expand_t* pmargin, bool isOrtho)
 {
     Ppoly_t *obs;
     polygon_t *poly;
-    double adj = 0.0;
-    int j, sides;
+    size_t sides;
     pointf polyp;
     boxf b;
     pointf pt;
     field_t *fld;
-    epsf_t *desc;
-    int isPoly;
+    bool isPoly;
     pointf* verts = NULL;
     pointf vs[4];
     pointf p;
-    pointf margin;
+    pointf margin = {0};
 
     switch (shapeOf(n)) {
     case SH_POLY:
     case SH_POINT:
-	obs = NEW(Ppoly_t);
-	poly = (polygon_t *) ND_shape_info(n);
+	obs = gv_alloc(sizeof(Ppoly_t));
+	poly = ND_shape_info(n);
 	if (isOrtho) {
-	    isPoly = 1;
+	    isPoly = true;
 	    sides = 4;
 	    verts = vs;
-	    margin.x = margin.y = 0;
 		/* For fixedshape, we can't use the width and height, as this includes
 		 * the label. We only want to use the actual node shape.
 		 */
-	    if (poly->option & FIXEDSHAPE) {
+	    if (poly->option.fixedshape) {
 		b = polyBB (poly);
 		vs[0] = b.LL;
 		vs[1].x = b.UR.x;
@@ -303,33 +359,43 @@ Ppoly_t *makeObstacle(node_t * n, expand_t* pmargin, boolean isOrtho)
 		vs[3].x = b.LL.x;
 		vs[3].y = b.UR.y;
 	    } else {
-		p.x = -ND_lw(n);
-		p.y = -ND_ht(n)/2.0;
+		const double width = ND_lw(n) + ND_rw(n);
+		const double outline_width = INCH2PS(ND_outline_width(n));
+		// scale lw and rw proportionally to sum to outline width
+		const double outline_lw = ND_lw(n) * outline_width / width;
+		const double outline_ht = INCH2PS(ND_outline_height(n));
+		p.x = -outline_lw;
+		p.y = -outline_ht / 2.0;
 		vs[0] = p;
-		p.x = ND_lw(n);
+		p.x = outline_lw;
 		vs[1] = p;
-		p.y = ND_ht(n)/2.0;
+		p.y = outline_ht / 2.0;
 		vs[2] = p;
-		p.x = -ND_lw(n);
+		p.x = -outline_lw;
 		vs[3] = p;
 	    }
 	}
 	else if (poly->sides >= 3) {
-	    isPoly = 1;
+	    isPoly = true;
 	    sides = poly->sides;
-	    verts = poly->vertices;
-	    margin.x = pmargin->x;
-	    margin.y = pmargin->y;
+            const double penwidth = late_double(n, N_penwidth, 1.0, 0.0);
+            // possibly use extra vertices representing the outline, i.e., the
+            // outermost periphery with penwidth taken into account
+            const size_t extra_peripheries = poly->peripheries >= 1 && penwidth > 0.0 ? 1 : 0;
+            const size_t outline_periphery = poly->peripheries + extra_peripheries;
+            const size_t vertices_offset = outline_periphery >= 1 ? (outline_periphery - 1) * sides : 0;
+            verts = poly->vertices + vertices_offset;
+            margin.x = pmargin->x;
+            margin.y = pmargin->y;
 	} else {		/* ellipse */
-	    isPoly = 0;
+	    isPoly = false;
 	    sides = 8;
-	    adj = drand48() * .01;
 	}
 	obs->pn = sides;
-	obs->ps = N_NEW(sides, Ppoint_t);
+	obs->ps = gv_calloc(sides, sizeof(Ppoint_t));
 	/* assuming polys are in CCW order, and pathplan needs CW */
-	for (j = 0; j < sides; j++) {
-	    double xmargin = 0.0, ymargin = 0.0;
+	for (size_t j = 0; j < sides; j++) {
+	    double xmargin = 0, ymargin = 0;
 	    if (isPoly) {
 		if (pmargin->doAdd) {
 		    if (sides == 4) {
@@ -350,12 +416,14 @@ Ppoly_t *makeObstacle(node_t * n, expand_t* pmargin, boolean isOrtho)
 			    xmargin = margin.x;
 			    ymargin = -margin.y;
 			    break;
+			default:
+			    UNREACHABLE();
 			}
 			polyp.x = verts[j].x + xmargin;
 			polyp.y = verts[j].y + ymargin;
 		    }
 		    else {
-			double h = LEN(verts[j].x,verts[j].y);
+			const double h = hypot(verts[j].x, verts[j].y);
 			polyp.x = verts[j].x * (1.0 + margin.x/h);
 			polyp.y = verts[j].y * (1.0 + margin.y/h);
 		    }
@@ -365,28 +433,23 @@ Ppoly_t *makeObstacle(node_t * n, expand_t* pmargin, boolean isOrtho)
 		    polyp.y = verts[j].y * margin.y;
 		}
 	    } else {
-		double c, s;
-		c = cos(2.0 * M_PI * j / sides + adj);
-		s = sin(2.0 * M_PI * j / sides + adj);
-		if (pmargin->doAdd) {
-		    polyp.x =  c*(ND_lw(n)+ND_rw(n)+pmargin->x) / 2.0;
-		    polyp.y =  s*(ND_ht(n)+pmargin->y) / 2.0;
-		}
-		else {
-		    polyp.x = pmargin->x * c * (ND_lw(n) + ND_rw(n)) / 2.0;
-		    polyp.y = pmargin->y * s * ND_ht(n) / 2.0;
-		}
+		const double width = INCH2PS(ND_outline_width(n));
+		const double height = INCH2PS(ND_outline_height(n));
+		margin = pmargin->doAdd ? (pointf){pmargin->x, pmargin->y} : (pointf){0};
+		const double ellipse_a = (width + margin.x) / 2.0;
+		const double ellipse_b = (height + margin.y) / 2.0;
+		polyp = circumscribed_polygon_corner_about_ellipse(ellipse_a, ellipse_b, j, sides);
 	    }
 	    obs->ps[sides - j - 1].x = polyp.x + ND_coord(n).x;
 	    obs->ps[sides - j - 1].y = polyp.y + ND_coord(n).y;
 	}
 	break;
     case SH_RECORD:
-	fld = (field_t *) ND_shape_info(n);
+	fld = ND_shape_info(n);
 	b = fld->b;
-	obs = NEW(Ppoly_t);
+	obs = gv_alloc(sizeof(Ppoly_t));
 	obs->pn = 4;
-	obs->ps = N_NEW(4, Ppoint_t);
+	obs->ps = gv_calloc(4, sizeof(Ppoint_t));
 	/* CW order */
 	pt = ND_coord(n);
 	if (pmargin->doAdd) {
@@ -403,10 +466,9 @@ Ppoly_t *makeObstacle(node_t * n, expand_t* pmargin, boolean isOrtho)
 	}
 	break;
     case SH_EPSF:
-	desc = (epsf_t *) (ND_shape_info(n));
-	obs = NEW(Ppoly_t);
+	obs = gv_alloc(sizeof(Ppoly_t));
 	obs->pn = 4;
-	obs->ps = N_NEW(4, Ppoint_t);
+	obs->ps = gv_calloc(4, sizeof(Ppoint_t));
 	/* CW order */
 	pt = ND_coord(n);
 	if (pmargin->doAdd) {
@@ -429,19 +491,14 @@ Ppoly_t *makeObstacle(node_t * n, expand_t* pmargin, boolean isOrtho)
     return obs;
 }
 
-/* getPath
- * Construct the shortest path from one endpoint of e to the other.
- * The obstacles and their number are given by obs and npoly.
+/* Construct the shortest path from one endpoint of e to the other.
  * vconfig is a precomputed data structure to help in the computation.
  * If chkPts is true, the function finds the polygons, if any, containing
  * the endpoints and tells the shortest path computation to ignore them. 
  * Assumes this info is set in ND_lim, usually from _spline_edges.
  * Returns the shortest path.
  */
-Ppolyline_t
-getPath(edge_t * e, vconfig_t * vconfig, int chkPts, Ppoly_t ** obs,
-	int npoly)
-{
+Ppolyline_t getPath(edge_t *e, vconfig_t *vconfig, bool chkPts) {
     Ppolyline_t line;
     int pp, qp;
     Ppoint_t p, q;
@@ -454,38 +511,22 @@ getPath(edge_t * e, vconfig_t * vconfig, int chkPts, Ppoly_t ** obs,
     if (chkPts) {
 	pp = ND_lim(agtail(e));
 	qp = ND_lim(aghead(e));
-/*
-	for (i = 0; i < npoly; i++) {
-	    if ((pp == POLYID_NONE) && in_poly(*obs[i], p))
-		pp = i;
-	    if ((qp == POLYID_NONE) && in_poly(*obs[i], q))
-		qp = i;
-	}
-*/
     }
     Pobspath(vconfig, p, pp, q, qp, &line);
     return line;
 }
 
-/* makePolyline:
- */
-static void
-makePolyline(graph_t* g, edge_t * e)
-{
+static void makePolyline(edge_t * e) {
     Ppolyline_t spl, line = ED_path(e);
-    Ppoint_t p0, q0;
 
-    p0 = line.ps[0];
-    q0 = line.ps[line.pn - 1];
     make_polyline (line, &spl);
     if (Verbose > 1)
 	fprintf(stderr, "polyline %s %s\n", agnameof(agtail(e)), agnameof(aghead(e)));
     clip_and_install(e, aghead(e), spl.ps, spl.pn, &sinfo);
-    addEdgeLabels(g, e, p0, q0);
+    addEdgeLabels(e);
 }
 
-/* makeSpline:
- * Construct a spline connecting the endpoints of e, avoiding the npoly
+/* Construct a spline connecting the endpoints of e, avoiding the npoly
  * obstacles obs.
  * The resultant spline is attached to the edge, the positions of any 
  * edge labels are computed, and the graph's bounding box is recomputed.
@@ -494,11 +535,9 @@ makePolyline(graph_t* g, edge_t * e)
  * is on or inside one of the obstacles and, if so, tells the shortest path
  * computation to ignore them. 
  */
-void makeSpline(graph_t* g, edge_t * e, Ppoly_t ** obs, int npoly, boolean chkPts)
-{
+void makeSpline(edge_t *e, Ppoly_t **obs, int npoly, bool chkPts) {
     Ppolyline_t line, spline;
-    Pvector_t slopes[2];
-    int i, n_barriers;
+    int i;
     int pp, qp;
     Ppoint_t p, q;
     Pedge_t *barriers;
@@ -510,17 +549,17 @@ void makeSpline(graph_t* g, edge_t * e, Ppoly_t ** obs, int npoly, boolean chkPt
     pp = qp = POLYID_NONE;
     if (chkPts)
 	for (i = 0; i < npoly; i++) {
-	    if ((pp == POLYID_NONE) && in_poly(*obs[i], p))
+	    if (pp == POLYID_NONE && in_poly(*obs[i], p))
 		pp = i;
-	    if ((qp == POLYID_NONE) && in_poly(*obs[i], q))
+	    if (qp == POLYID_NONE && in_poly(*obs[i], q))
 		qp = i;
 	}
 
+    size_t n_barriers;
     make_barriers(obs, npoly, pp, qp, &barriers, &n_barriers);
-    slopes[0].x = slopes[0].y = 0.0;
-    slopes[1].x = slopes[1].y = 0.0;
+    Pvector_t slopes[2] = {0};
     if (Proutespline(barriers, n_barriers, line, slopes, &spline) < 0) {
-	agerr (AGERR, "makeSpline: failed to make spline edge (%s,%s)\n", agnameof(agtail(e)), agnameof(aghead(e)));
+	agerrorf("makeSpline: failed to make spline edge (%s,%s)\n", agnameof(agtail(e)), agnameof(aghead(e)));
 	return;
     }
 
@@ -529,24 +568,22 @@ void makeSpline(graph_t* g, edge_t * e, Ppoly_t ** obs, int npoly, boolean chkPt
 	fprintf(stderr, "spline %s %s\n", agnameof(agtail(e)), agnameof(aghead(e)));
     clip_and_install(e, aghead(e), spline.ps, spline.pn, &sinfo);
     free(barriers);
-    addEdgeLabels(g, e, p, q);
+    addEdgeLabels(e);
 }
 
   /* True if either head or tail has a port on its boundary */
 #define BOUNDARY_PORT(e) ((ED_tail_port(e).side)||(ED_head_port(e).side))
 
-/* _spline_edges:
- * Basic default routine for creating edges.
+/* Basic default routine for creating edges.
  * If splines are requested, we construct the obstacles.
  * If not, or nodes overlap, the function reverts to line segments.
  * NOTE: intra-cluster edges are not constrained to
  * remain in the cluster's bounding box and, conversely, a cluster's box
  * is not altered to reflect intra-cluster edges.
  * If Nop > 1 and the spline exists, it is just copied.
- * NOTE: if edgetype = ET_NONE, we shouldn't be here.
+ * NOTE: if edgetype = EDGETYPE_NONE, we shouldn't be here.
  */
-static int _spline_edges(graph_t * g, expand_t* pmargin, int edgetype)
-{
+static int spline_edges_(graph_t *g, expand_t *pmargin, int edgetype) {
     node_t *n;
     edge_t *e;
     edge_t *e0;
@@ -554,8 +591,7 @@ static int _spline_edges(graph_t * g, expand_t* pmargin, int edgetype)
     Ppoly_t *obp;
     int cnt, i = 0, npoly;
     vconfig_t *vconfig = 0;
-    path *P = NULL;
-    int useEdges = (Nop > 1);
+    int useEdges = Nop > 1;
     int legal = 0;
 
 #ifdef HAVE_GTS
@@ -563,10 +599,10 @@ static int _spline_edges(graph_t * g, expand_t* pmargin, int edgetype)
 #endif
     
     /* build configuration */
-    if (edgetype >= ET_PLINE) {
-	obs = N_NEW(agnnodes(g), Ppoly_t *);
+    if (edgetype >= EDGETYPE_PLINE) {
+	obs = gv_calloc(agnnodes(g), sizeof(Ppoly_t*));
 	for (n = agfstnode(g); n; n = agnxtnode(g, n)) {
-	    obp = makeObstacle(n, pmargin, edgetype == ET_ORTHO);
+	    obp = makeObstacle(n, pmargin, edgetype == EDGETYPE_ORTHO);
 	    if (obp) {
 		ND_lim(n) = i; 
 		obs[i++] = obp;
@@ -580,33 +616,33 @@ static int _spline_edges(graph_t * g, expand_t* pmargin, int edgetype)
     npoly = i;
     if (obs) {
 	if ((legal = Plegal_arrangement(obs, npoly))) {
-	    if (edgetype != ET_ORTHO) vconfig = Pobsopen(obs, npoly);
+	    if (edgetype != EDGETYPE_ORTHO) vconfig = Pobsopen(obs, npoly);
 	}
 	else {
-	    if (edgetype == ET_ORTHO)
-		agerr(AGWARN, "the bounding boxes of some nodes touch - falling back to straight line edges\n");
+	    if (edgetype == EDGETYPE_ORTHO)
+		agwarningf("the bounding boxes of some nodes touch - falling back to straight line edges\n");
 	    else 
-		agerr(AGWARN, "some nodes with margin (%.02f,%.02f) touch - falling back to straight line edges\n", pmargin->x, pmargin->y);
+		agwarningf("some nodes with margin (%.02f,%.02f) touch - falling back to straight line edges\n", pmargin->x, pmargin->y);
 	}
     }
 
     /* route edges  */
     if (Verbose)
 	fprintf(stderr, "Creating edges using %s\n",
-	    (legal && (edgetype == ET_ORTHO)) ? "orthogonal lines" :
-	    (vconfig ? (edgetype == ET_SPLINE ? "splines" : "polylines") : 
+	    (legal && edgetype == EDGETYPE_ORTHO) ? "orthogonal lines" :
+	    (vconfig ? (edgetype == EDGETYPE_SPLINE ? "splines" : "polylines") :
 		"line segments"));
     if (vconfig) {
 	/* path-finding pass */
 	for (n = agfstnode(g); n; n = agnxtnode(g, n)) {
 	    for (e = agfstout(g, n); e; e = agnxtout(g, e)) {
-		ED_path(e) = getPath(e, vconfig, TRUE, obs, npoly);
+		ED_path(e) = getPath(e, vconfig, true);
 	    }
 	}
     }
 #ifdef ORTHO
-    else if (legal && (edgetype == ET_ORTHO)) {
-	orthoEdges (g, 0);
+    else if (legal && edgetype == EDGETYPE_ORTHO) {
+	orthoEdges(g, false);
 	useEdges = 1;
     }
 #endif
@@ -614,30 +650,37 @@ static int _spline_edges(graph_t * g, expand_t* pmargin, int edgetype)
     /* spline-drawing pass */
     for (n = agfstnode(g); n; n = agnxtnode(g, n)) {
 	for (e = agfstout(g, n); e; e = agnxtout(g, e)) {
-/* fprintf (stderr, "%s -- %s %d\n", agnameof(agtail(e)), agnameof(aghead(e)), ED_count(e)); */
 	    node_t *head = aghead(e);
 	    if (useEdges && ED_spl(e)) {
-		addEdgeLabels(g, e,
-			      add_pointf(ND_coord(n), ED_tail_port(e).p),
-			      add_pointf(ND_coord(head), ED_head_port(e).p));
+		addEdgeLabels(e);
+		if (Nop == 3 && ED_spl(e)->size > 0) {
+		    // use first bezier, start point and end point will lost
+		    if (ED_spl(e)->size > 1) {
+			agwarningf("edge %s -> %s : set more than one spline. First used, other dropped.\n", agnameof(n), agnameof(head));
+		    }
+		    bezier *bez = ED_spl(e)->list;
+		    size_t sz = bez->size;
+		    bez->size = 0;
+		    pointf *pb = bez->list;
+		    bez->list = NULL;
+		    gv_free_splines(e);
+		    clip_and_install(e, head, pb, sz, &sinfo);
+		    free(pb);
+		}
 	    } 
 	    else if (ED_count(e) == 0) continue;  /* only do representative */
 	    else if (n == head) {    /* self arc */
-		if (!P) {
-		    P = NEW(path);
-		    P->boxes = N_NEW(agnnodes(g) + 20 * 2 * 9, boxf);
-		}
-		makeSelfArcs(P, e, GD_nodesep(g->root));
-	    } else if (vconfig) { /* ET_SPLINE or ET_PLINE */
+		makeSelfArcs(e, GD_nodesep(g->root));
+	    } else if (vconfig) { /* EDGETYPE_SPLINE or EDGETYPE_PLINE */
 #ifdef HAVE_GTS
-		if ((ED_count(e) > 1) || BOUNDARY_PORT(e)) {
+		if (ED_count(e) > 1 || BOUNDARY_PORT(e)) {
 		    int fail = 0;
-		    if ((ED_path(e).pn == 2) && !BOUNDARY_PORT(e))
+		    if (ED_path(e).pn == 2 && !BOUNDARY_PORT(e))
 			     /* if a straight line can connect the ends */
 			makeStraightEdge(g, e, edgetype, &sinfo);
 		    else { 
 			if (!rtr) rtr = mkRouter (obs, npoly);
-			fail = makeMultiSpline(g, e, rtr, edgetype == ET_PLINE);
+			fail = makeMultiSpline(e, rtr, edgetype == EDGETYPE_PLINE);
 		    } 
 		    if (!fail) continue;
 		}
@@ -650,10 +693,10 @@ static int _spline_edges(graph_t * g, expand_t* pmargin, int edgetype)
 		if (Concentrate) cnt = 1; /* only do representative */
 		e0 = e;
 		for (i = 0; i < cnt; i++) {
-		    if (edgetype == ET_SPLINE)
-			makeSpline(g, e0, obs, npoly, TRUE);
+		    if (edgetype == EDGETYPE_SPLINE)
+			makeSpline(e0, obs, npoly, true);
 		    else
-			makePolyline(g, e0);
+			makePolyline(e0);
 		    e0 = ED_to_virt(e0);
 		}
 	    } else {
@@ -669,10 +712,6 @@ static int _spline_edges(graph_t * g, expand_t* pmargin, int edgetype)
 
     if (vconfig)
 	Pobsclose (vconfig);
-    if (P) {
-	free(P->boxes);
-	free(P);
-    }
     if (obs) {
 	for (i=0; i < npoly; i++) {
 	    free (obs[i]->ps);
@@ -683,8 +722,7 @@ static int _spline_edges(graph_t * g, expand_t* pmargin, int edgetype)
     return 0;
 }
 
-/* splineEdges:
- * Main wrapper code for generating edges.
+/* Main wrapper code for generating edges.
  * Sets desired separation. 
  * Coalesces equivalent edges (edges * with the same endpoints). 
  * It then calls the edge generating function, and marks the
@@ -717,7 +755,7 @@ splineEdges(graph_t * g, int (*edgefn) (graph_t *, expand_t*, int),
     map = dtopen(&edgeItemDisc, Dtoset);
     for (n = agfstnode(g); n; n = agnxtnode(g, n)) {
 	for (e = agfstout(g, n); e; e = agnxtout(g, e)) {
-	    if ((Nop > 1 && ED_spl(e))) {
+	    if (Nop > 1 && ED_spl(e)) {
 		/* If Nop > 1 (use given edges) and e has a spline, it
  		 * should have its own equivalence class.
 		 */
@@ -741,17 +779,15 @@ splineEdges(graph_t * g, int (*edgefn) (graph_t *, expand_t*, int),
     return 0;
 }
 
-/* spline_edges1:
- * Construct edges using default algorithm and given splines value.
+/* Construct edges using default algorithm and given splines value.
  * Return 0 on success.
  */
 int spline_edges1(graph_t * g, int edgetype)
 {
-    return splineEdges(g, _spline_edges, edgetype);
+  return splineEdges(g, spline_edges_, edgetype);
 }
 
-/* spline_edges0:
- * Sets the graph's aspect ratio.
+/* Sets the graph's aspect ratio.
  * Check splines attribute and construct edges using default algorithm.
  * If the splines attribute is defined but equal to "", skip edge routing.
  * 
@@ -764,24 +800,21 @@ int spline_edges1(graph_t * g, int edgetype)
  * when output in dot or plain format.
  *
  */
-void spline_edges0(graph_t * g, boolean set_aspect)
-{
+void spline_edges0(graph_t *g, bool set_aspect) {
     int et = EDGE_TYPE (g);
     if (set_aspect) neato_set_aspect(g);
-    if (et == ET_NONE) return;
+    if (et == EDGETYPE_NONE) return;
 #ifndef ORTHO
-    if (et == ET_ORTHO) {
-	agerr (AGWARN, "Orthogonal edges not yet supported\n");
-	et = ET_PLINE; 
-	GD_flags(g->root) &= ~ET_ORTHO;
-	GD_flags(g->root) |= ET_PLINE;
+    if (et == EDGETYPE_ORTHO) {
+	agwarningf("Orthogonal edges not yet supported\n");
+	et = EDGETYPE_PLINE;
+	GD_flags(g->root) &= ~EDGETYPE_ORTHO;
+	GD_flags(g->root) |= EDGETYPE_PLINE;
     }
 #endif
     spline_edges1(g, et);
 }
 
-/* shiftClusters:
- */
 static void
 shiftClusters (graph_t * g, pointf offset)
 {
@@ -797,8 +830,7 @@ shiftClusters (graph_t * g, pointf offset)
     GD_bb(g).LL.y -= offset.y;
 }
 
-/* spline_edges:
- * Compute bounding box, translate graph to origin,
+/* Compute bounding box, translate graph to origin,
  * then construct all edges.
  */
 void spline_edges(graph_t * g)
@@ -815,16 +847,14 @@ void spline_edges(graph_t * g)
     }
 	
     shiftClusters (g, GD_bb(g).LL);
-    spline_edges0(g, TRUE);
+    spline_edges0(g, true);
 }
 
-/* scaleEdge:
- * Scale edge by given factor.
+/* Scale edge by given factor.
  * Assume ED_spl != NULL.
  */
 static void scaleEdge(edge_t * e, double xf, double yf)
 {
-    int i, j;
     pointf *pt;
     bezier *bez;
     pointf delh, delt;
@@ -835,14 +865,14 @@ static void scaleEdge(edge_t * e, double xf, double yf)
     delt.y = POINTS_PER_INCH * (ND_pos(agtail(e))[1] * (yf - 1.0));
 
     bez = ED_spl(e)->list;
-    for (i = 0; i < ED_spl(e)->size; i++) {
+    for (size_t i = 0; i < ED_spl(e)->size; i++) {
 	pt = bez->list;
-	for (j = 0; j < bez->size; j++) {
-	    if ((i == 0) && (j == 0)) {
+	for (size_t j = 0; j < bez->size; j++) {
+	    if (i == 0 && j == 0) {
 		pt->x += delt.x;
 		pt->y += delt.y;
 	    }
-	    else if ((i == ED_spl(e)->size-1) && (j == bez->size-1)) {
+	    else if (i == ED_spl(e)->size-1 && j == bez->size-1) {
 		pt->x += delh.x;
 		pt->y += delh.y;
 	    }
@@ -877,9 +907,7 @@ static void scaleEdge(edge_t * e, double xf, double yf)
     }
 }
 
-/* scaleBB:
- * Scale bounding box of clusters of g by given factors.
- */
+/// scale bounding box of clusters of g by given factors
 static void scaleBB(graph_t * g, double xf, double yf)
 {
     int i;
@@ -898,20 +926,18 @@ static void scaleBB(graph_t * g, double xf, double yf)
 	scaleBB(GD_clust(g)[i], xf, yf);
 }
 
-/* translateE:
- * Translate edge by offset.
+/* Translate edge by offset.
  * Assume ED_spl(e) != NULL
  */
 static void translateE(edge_t * e, pointf offset)
 {
-    int i, j;
     pointf *pt;
     bezier *bez;
 
     bez = ED_spl(e)->list;
-    for (i = 0; i < ED_spl(e)->size; i++) {
+    for (size_t i = 0; i < ED_spl(e)->size; i++) {
 	pt = bez->list;
-	for (j = 0; j < bez->size; j++) {
+	for (size_t j = 0; j < bez->size; j++) {
 	    pt->x -= offset.x;
 	    pt->y -= offset.y;
 	    pt++;
@@ -945,8 +971,6 @@ static void translateE(edge_t * e, pointf offset)
     }
 }
 
-/* translateG:
- */
 static void translateG(Agraph_t * g, pointf offset)
 {
     int i;
@@ -965,8 +989,6 @@ static void translateG(Agraph_t * g, pointf offset)
 	translateG(GD_clust(g)[i], offset);
 }
 
-/* neato_translate:
- */
 void neato_translate(Agraph_t * g)
 {
     node_t *n;
@@ -994,61 +1016,57 @@ void neato_translate(Agraph_t * g)
     translateG(g, ll);
 }
 
-/* _neato_set_aspect;
- * Assume all bounding boxes are correct.
+/* Assume all bounding boxes are correct.
  * Return false if no transform is performed. This includes
  * the possibility that a translation was done.
  */
-static boolean _neato_set_aspect(graph_t * g)
+static bool _neato_set_aspect(graph_t * g)
 {
     double xf, yf, actual, desired;
     node_t *n;
-    boolean translated = FALSE;
+    bool translated = false;
 
     if (g->root != g)
-	return FALSE;
+	return false;
 
-    /* compute_bb(g); */
     if (GD_drawing(g)->ratio_kind) {
 	if (GD_bb(g).LL.x || GD_bb(g).LL.y) {
-	    translated = TRUE;
+	    translated = true;
 	    neato_translate (g);
 	}
 	/* normalize */
 	if (GD_flip(g)) {
-	    double t = GD_bb(g).UR.x;
-	    GD_bb(g).UR.x = GD_bb(g).UR.y;
-	    GD_bb(g).UR.y = t;
+	    GD_bb(g).UR = exch_xyf(GD_bb(g).UR);
 	}
 	if (GD_drawing(g)->ratio_kind == R_FILL) {
 	    /* fill is weird because both X and Y can stretch */
 	    if (GD_drawing(g)->size.x <= 0)
-		return (translated || FALSE);
-	    xf = (double) GD_drawing(g)->size.x / GD_bb(g).UR.x;
-	    yf = (double) GD_drawing(g)->size.y / GD_bb(g).UR.y;
+		return translated;
+	    xf = GD_drawing(g)->size.x / GD_bb(g).UR.x;
+	    yf = GD_drawing(g)->size.y / GD_bb(g).UR.y;
 	    /* handle case where one or more dimensions is too big */
-	    if ((xf < 1.0) || (yf < 1.0)) {
+	    if (xf < 1.0 || yf < 1.0) {
 		if (xf < yf) {
-		    yf = yf / xf;
+		    yf /= xf;
 		    xf = 1.0;
 		} else {
-		    xf = xf / yf;
+		    xf /= yf;
 		    yf = 1.0;
 		}
 	    }
 	} else if (GD_drawing(g)->ratio_kind == R_EXPAND) {
 	    if (GD_drawing(g)->size.x <= 0)
-		return (translated || FALSE);
-	    xf = (double) GD_drawing(g)->size.x / GD_bb(g).UR.x;
-	    yf = (double) GD_drawing(g)->size.y / GD_bb(g).UR.y;
-	    if ((xf > 1.0) && (yf > 1.0)) {
-		double scale = MIN(xf, yf);
+		return translated;
+	    xf = GD_drawing(g)->size.x / GD_bb(g).UR.x;
+	    yf = GD_drawing(g)->size.y / GD_bb(g).UR.y;
+	    if (xf > 1.0 && yf > 1.0) {
+		double scale = fmin(xf, yf);
 		xf = yf = scale;
 	    } else
-		return (translated || FALSE);
+		return translated;
 	} else if (GD_drawing(g)->ratio_kind == R_VALUE) {
 	    desired = GD_drawing(g)->ratio;
-	    actual = (GD_bb(g).UR.y) / (GD_bb(g).UR.x);
+	    actual = GD_bb(g).UR.y / GD_bb(g).UR.x;
 	    if (actual < desired) {
 		yf = desired / actual;
 		xf = 1.0;
@@ -1057,11 +1075,9 @@ static boolean _neato_set_aspect(graph_t * g)
 		yf = 1.0;
 	    }
 	} else
-	    return (translated || FALSE);
+	    return translated;
 	if (GD_flip(g)) {
-	    double t = xf;
-	    xf = yf;
-	    yf = t;
+	    SWAP(&xf, &yf);
 	}
 
 	if (Nop > 1) {
@@ -1076,33 +1092,32 @@ static boolean _neato_set_aspect(graph_t * g)
 	 * allocate it in the root graph and the connected components. 
 	 */
 	for (n = agfstnode(g); n; n = agnxtnode(g, n)) {
-	    ND_pos(n)[0] = ND_pos(n)[0] * xf;
-	    ND_pos(n)[1] = ND_pos(n)[1] * yf;
+	    ND_pos(n)[0] *= xf;
+	    ND_pos(n)[1] *= yf;
 	}
 	scaleBB(g, xf, yf);
-        return TRUE;
+        return true;
     }
     else
-	return FALSE;
+	return false;
 }
 
-/* neato_set_aspect:
- * Sets aspect ratio if necessary; real work done in _neato_set_aspect;
+/* Sets aspect ratio if necessary; real work done in _neato_set_aspect;
  * This also copies the internal layout coordinates (ND_pos) to the 
  * external ones (ND_coord).
  *
  * Return true if some node moved.
  */
-boolean neato_set_aspect(graph_t * g)
+bool neato_set_aspect(graph_t * g)
 {
     node_t *n;
-    boolean moved = FALSE;
+    bool moved = false;
 
 	/* setting aspect ratio only makes sense on root graph */
     moved = _neato_set_aspect(g);
     for (n = agfstnode(g); n; n = agnxtnode(g, n)) {
-	ND_coord(n).x = POINTS_PER_INCH * (ND_pos(n)[0]);
-	ND_coord(n).y = POINTS_PER_INCH * (ND_pos(n)[1]);
+	ND_coord(n).x = POINTS_PER_INCH * ND_pos(n)[0];
+	ND_coord(n).y = POINTS_PER_INCH * ND_pos(n)[1];
     }
     return moved;
 }

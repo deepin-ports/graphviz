@@ -1,17 +1,20 @@
-/* $Id$ $Revision$ */
-/* vim:set shiftwidth=4 ts=8: */
-
 /*************************************************************************
  * Copyright (c) 2011 AT&T Intellectual Property 
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
- * http://www.eclipse.org/legal/epl-v10.html
+ * https://www.eclipse.org/legal/epl-v10.html
  *
- * Contributors: See CVS logs. Details at http://www.graphviz.org/
+ * Contributors: Details at https://graphviz.org
  *************************************************************************/
 
+#include "config.h"
 
+#include "../tcl-compat.h"
+#include <assert.h>
+#include <cgraph/rdr.h>
+#include <limits.h>
+#include <stddef.h>
 #include "tcldot.h"
 
 /*
@@ -30,9 +33,11 @@
  */
 int myiodisc_afread(void* channel, char *ubuf, int n)
 {
+    assert(n >= 0);
+
     static Tcl_DString dstr;
-    static int strpos;
-    int nput;
+    static Tcl_Size strpos;
+    Tcl_Size nput;
 
     if (!n) {			/* a call with n==0 (from aglexinit) resets */
 	*ubuf = '\0';
@@ -47,13 +52,13 @@ int myiodisc_afread(void* channel, char *ubuf, int n)
 	nput = Tcl_DStringLength(&dstr) - strpos;
 	if (nput > n) {
 	    /* chunk between first and last */
-	    memcpy(ubuf, (strpos + Tcl_DStringValue(&dstr)), n);
+	    memcpy(ubuf, strpos + Tcl_DStringValue(&dstr), (size_t)n);
 	    strpos += n;
 	    nput = n;
 	    ubuf[n] = '\0';
 	} else {
 	    /* last chunk */
-	    memcpy(ubuf, (strpos + Tcl_DStringValue(&dstr)), nput);
+	    memcpy(ubuf, strpos + Tcl_DStringValue(&dstr), (size_t)nput);
 	    strpos = 0;
 	}
     } else {
@@ -70,15 +75,15 @@ int myiodisc_afread(void* channel, char *ubuf, int n)
 	if (Tcl_DStringLength(&dstr) > n) {
 	    /* first chunk */
 	    nput = n;
-	    memcpy(ubuf, Tcl_DStringValue(&dstr), n);
+	    memcpy(ubuf, Tcl_DStringValue(&dstr), (size_t)n);
 	    strpos = n;
 	} else {
 	    /* single chunk */
 	    nput = Tcl_DStringLength(&dstr);
-	    memcpy(ubuf, Tcl_DStringValue(&dstr),nput);
+	    memcpy(ubuf, Tcl_DStringValue(&dstr), (size_t)nput);
 	}
     }
-    return nput;
+    return (int)nput;
 }
 
 
@@ -88,38 +93,19 @@ int myiodisc_memiofread(void *chan, char *buf, int bufsize)
     const char *ptr;
     char *optr;
     char c;
-    int l;
     rdr_t *s;
 
     if (bufsize == 0) return 0;
-    s = (rdr_t *) chan;
+    s = chan;
     if (s->cur >= s->len)
         return 0;
-    l = 0;
+    size_t l = 0;
     ptr = s->data + s->cur;
     optr = buf;
     do {
         *optr++ = c = *ptr++;
         l++;
-    } while (c && (c != '\n') && (l < bufsize));
+    } while (c && c != '\n' && l < INT_MAX && (int)l < bufsize);
     s->cur += l;
-    return l;
+    return (int)l;
 }
-
-#if 0
-Agraph_t *agread_usergets (ictx_t *ictx, FILE * fp, int (*usergets)(void *chan, char *buf, int bufsize))
-{
-    Agraph_t* g;
-    Agiodisc_t ioDisc;
-
-    ioDisc.afread = usergets;
-    ioDisc.putstr = AgIoDisc.putstr;
-    ioDisc.flush = AgIoDisc.flush;
-
-    ictx->mydisc.io = &ioDisc;
-    g = agread (fp, (Agdisc_t *)ictx);
-    ictx->mydisc.io = &AgIoDisc;   /* restore io */
-    return g;
-}
-
-#endif

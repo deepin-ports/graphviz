@@ -11,29 +11,73 @@
  * This version is released under the CPL (Common Public License) with
  * the Graphviz distribution.
  * A version is also available under the LGPL as part of the Adaptagrams
- * project: http://sourceforge.net/projects/adaptagrams.  
+ * project: https://github.com/mjwybrow/adaptagrams.  
  * If you make improvements or bug fixes to this code it would be much
  * appreciated if you could also contribute those changes back to the
  * Adaptagrams repository.
  */
+
+#include "config.h"
+
+#include <algorithm>
 #include <cassert>
-#include "pairingheap/PairingHeap.h"
-#include "constraint.h"
-#include "block.h"
-#include "blocks.h"
-#ifdef RECTANGLE_OVERLAP_LOGGING
+#include <ostream>
+#include <vector>
+#include <vpsc/constraint.h>
+#include <vpsc/block.h>
+#include <vpsc/blocks.h>
 #include <fstream>
 using std::ios;
 using std::ofstream;
-using std::endl;
-#endif
 using std::vector;
 
-typedef vector<Constraint*>::iterator Cit;
+#ifndef RECTANGLE_OVERLAP_LOGGING
+	#define RECTANGLE_OVERLAP_LOGGING 0
+#endif
+
+/// `>` comparator for constraints
+static bool gt(const Constraint *const lhs, const Constraint *const rhs) {
+  return compareConstraints(rhs, lhs);
+}
+
+/// create a heap within a vector
+///
+/// The standard library’s heap functionality is all structured around creating
+/// a max-heap but we want a min-heap. So we flip the comparator we give it.
+static void make_heap(std::vector<Constraint *> &heap) {
+  std::make_heap(heap.begin(), heap.end(), gt);
+}
+
+/// add all elements from `heap2` into the heap `heap1`
+static void merge_heaps(std::vector<Constraint *> &heap1,
+                  const std::vector<Constraint *> &heap2) {
+  heap1.insert(heap1.end(), heap2.begin(), heap2.end());
+  make_heap(heap1);
+}
+
+/// get the minimum heap element
+static Constraint *findMin(std::vector<Constraint *> &heap) {
+  assert(std::is_heap(heap.begin(), heap.end(), gt));
+  return heap.front();
+}
+
+/// remove the minimum heap element
+static void deleteMin(std::vector<Constraint *> &heap) {
+  assert(std::is_heap(heap.begin(), heap.end(), gt));
+  std::pop_heap(heap.begin(), heap.end(), gt);
+  heap.pop_back();
+}
+
+/// add an item to a heap
+static void insert(std::vector<Constraint *> &heap, Constraint *c) {
+  assert(std::is_heap(heap.begin(), heap.end(), gt));
+  heap.push_back(c);
+  std::push_heap(heap.begin(), heap.end(), gt);
+}
 
 void Block::addVariable(Variable *v) {
 	v->block=this;
-	vars->push_back(v);
+	vars.push_back(v);
 	weight+=v->weight;
 	wposn += v->weight * (v->desiredPosition - v->offset);
 	posn=wposn/weight;
@@ -41,11 +85,8 @@ void Block::addVariable(Variable *v) {
 Block::Block(Variable *v) {
 	timeStamp=0;
 	posn=weight=wposn=0;
-	in=NULL;
-	out=NULL;
 	deleted=false;
-	vars=new vector<Variable*>;
-	if(v!=NULL) {
+	if(v!=nullptr) {
 		v->offset=0;
 		addVariable(v);
 	}
@@ -53,54 +94,49 @@ Block::Block(Variable *v) {
 
 double Block::desiredWeightedPosition() {
 	double wp = 0;
-	for (vector<Variable*>::iterator v=vars->begin();v!=vars->end();v++) {
-		wp += ((*v)->desiredPosition - (*v)->offset) * (*v)->weight;
+	for (const Variable *v : vars) {
+		wp += (v->desiredPosition - v->offset) * v->weight;
 	}
 	return wp;
 }
-Block::~Block(void)
-{
-	delete vars;
-	delete in;
-	delete out;
-}
 void Block::setUpInConstraints() {
-	setUpConstraintHeap(in,true);
+  in = setUpConstraintHeap(true);
 }
 void Block::setUpOutConstraints() {
-	setUpConstraintHeap(out,false);
+  out = setUpConstraintHeap(false);
 }
-void Block::setUpConstraintHeap(PairingHeap<Constraint*>* &h,bool in) {
-	delete h;
-	h = new PairingHeap<Constraint*>(&compareConstraints);
-	for (vector<Variable*>::iterator i=vars->begin();i!=vars->end();i++) {
-		Variable *v=*i;
-		vector<Constraint*> *cs=in?&(v->in):&(v->out);
-		for (vector<Constraint*>::iterator j=cs->begin();j!=cs->end();j++) {
-			Constraint *c=*j;
+
+std::vector<Constraint *> Block::setUpConstraintHeap(bool use_in) {
+	std::vector<Constraint *> h;
+	for (Variable *v : vars) {
+		vector<Constraint*> *cs= use_in ? &v->in : &v->out;
+		for (Constraint *c : *cs) {
 			c->timeStamp=blockTimeCtr;
-			if (c->left->block != this && in || c->right->block != this && !in) {
-				h->insert(c);
+			if ((c->left->block != this && use_in) || (c->right->block != this && !use_in)) {
+				h.push_back(c);
 			}
 		}
 	}
+	make_heap(h);
+	return h;
 }	
 void Block::merge(Block* b, Constraint* c) {
-#ifdef RECTANGLE_OVERLAP_LOGGING
-	ofstream f(LOGFILE,ios::app);
-	f<<"  merging on: "<<*c<<",c->left->offset="<<c->left->offset<<",c->right->offset="<<c->right->offset<<endl;
-#endif
-	double dist = c->right->offset - c->left->offset - c->gap;
+	if (RECTANGLE_OVERLAP_LOGGING) {
+		ofstream f(LOGFILE,ios::app);
+		f<<"  merging on: "<<*c<<",c->left->offset="<<c->left->offset<<",c->right->offset="<<c->right->offset<<"\n";
+	}
+	const double dist = c->right->offset - c->left->offset - c->gap;
 	Block *l=c->left->block;
 	Block *r=c->right->block;
-	if (vars->size() < b->vars->size()) {
+	if (vars.size() < b->vars.size()) {
 		r->merge(l,c,dist);
 	} else {
 	       	l->merge(r,c,-dist);
 	}
-#ifdef RECTANGLE_OVERLAP_LOGGING
-	f<<"  merged block="<<(b->deleted?*this:*b)<<endl;
-#endif
+	if (RECTANGLE_OVERLAP_LOGGING) {
+		ofstream f(LOGFILE,ios::app);
+		f<<"  merged block="<<(b->deleted?*this:*b)<<"\n";
+	}
 }
 /**
  * Merges b into this block across c.  Can be either a
@@ -110,115 +146,106 @@ void Block::merge(Block* b, Constraint* c) {
  * @param distance separation required to satisfy c
  */
 void Block::merge(Block *b, Constraint *c, double dist) {
-#ifdef RECTANGLE_OVERLAP_LOGGING
-	ofstream f(LOGFILE,ios::app);
-	f<<"    merging: "<<*b<<"dist="<<dist<<endl;
-#endif
+	if (RECTANGLE_OVERLAP_LOGGING) {
+		ofstream f(LOGFILE,ios::app);
+		f<<"    merging: "<<*b<<"dist="<<dist<<"\n";
+	}
 	c->active=true;
 	wposn+=b->wposn-dist*b->weight;
 	weight+=b->weight;
 	posn=wposn/weight;
-	for(vector<Variable*>::iterator i=b->vars->begin();i!=b->vars->end();i++) {
-		Variable *v=*i;
+	for (Variable *v : b->vars) {
 		v->block=this;
 		v->offset+=dist;
-		vars->push_back(v);
+		vars.push_back(v);
 	}
 	b->deleted=true;
 }
 
 void Block::mergeIn(Block *b) {
-#ifdef RECTANGLE_OVERLAP_LOGGING
-	ofstream f(LOGFILE,ios::app);
-	f<<"  merging constraint heaps... "<<endl;
-#endif
+	if (RECTANGLE_OVERLAP_LOGGING) {
+		ofstream f(LOGFILE,ios::app);
+		f<<"  merging constraint heaps... \n";
+	}
 	// We check the top of the heaps to remove possible internal constraints
 	findMinInConstraint();
 	b->findMinInConstraint();
-	in->merge(b->in);
-#ifdef RECTANGLE_OVERLAP_LOGGING
-	f<<"  merged heap: "<<*in<<endl;
-#endif
+	merge_heaps(in, b->in);
 }
 void Block::mergeOut(Block *b) {	
 	findMinOutConstraint();
 	b->findMinOutConstraint();
-	out->merge(b->out);
+	merge_heaps(out, b->out);
 }
 Constraint *Block::findMinInConstraint() {
-	Constraint *v = NULL;
+	Constraint *v = nullptr;
 	vector<Constraint*> outOfDate;
-	while (!in->isEmpty()) {
-		v = in->findMin();
-		Block *lb=v->left->block;
-		Block *rb=v->right->block;
+	while (!in.empty()) {
+		v = findMin(in);
+		const Block *lb = v->left->block;
+		const Block *rb = v->right->block;
 		// rb may not be this if called between merge and mergeIn
-#ifdef RECTANGLE_OVERLAP_LOGGING
-		ofstream f(LOGFILE,ios::app);
-		f<<"  checking constraint ... "<<*v;
-		f<<"    timestamps: left="<<lb->timeStamp<<" right="<<rb->timeStamp<<" constraint="<<v->timeStamp<<endl;
-#endif
+		if (RECTANGLE_OVERLAP_LOGGING) {
+			ofstream f(LOGFILE,ios::app);
+			f<<"  checking constraint ... "<<*v;
+			f<<"    timestamps: left="<<lb->timeStamp<<" right="<<rb->timeStamp<<" constraint="<<v->timeStamp<<"\n";
+		}
 		if(lb == rb) {
 			// constraint has been merged into the same block
-#ifdef RECTANGLE_OVERLAP_LOGGING
-			if(v->slack()<0) {
-				f<<"  violated internal constraint found! "<<*v<<endl;
-				f<<"     lb="<<*lb<<endl;
-				f<<"     rb="<<*rb<<endl;
+			if(RECTANGLE_OVERLAP_LOGGING && v->slack()<0) {
+				ofstream f(LOGFILE,ios::app);
+				f<<"  violated internal constraint found! "<<*v<<"\n";
+				f<<"     lb="<<*lb<<"\n";
+				f<<"     rb="<<*rb<<"\n";
 			}
-#endif
-			in->deleteMin();
-#ifdef RECTANGLE_OVERLAP_LOGGING
-			f<<" ... skipping internal constraint"<<endl;
-#endif
+			deleteMin(in);
+			if (RECTANGLE_OVERLAP_LOGGING) {
+				ofstream f(LOGFILE,ios::app);
+				f<<" ... skipping internal constraint\n";
+			}
 		} else if(v->timeStamp < lb->timeStamp) {
 			// block at other end of constraint has been moved since this
-			in->deleteMin();
+			deleteMin(in);
 			outOfDate.push_back(v);
-#ifdef RECTANGLE_OVERLAP_LOGGING
-			f<<"    reinserting out of date (reinsert later)"<<endl;
-#endif
+			if (RECTANGLE_OVERLAP_LOGGING) {
+				ofstream f(LOGFILE,ios::app);
+				f<<"    reinserting out of date (reinsert later)\n";
+			}
 		} else {
 			break;
 		}
 	}
-	for(vector<Constraint*>::iterator i=outOfDate.begin();i!=outOfDate.end();i++) {
-		v=*i;
-		v->timeStamp=blockTimeCtr;
-		in->insert(v);
+	for (Constraint *c : outOfDate) {
+		c->timeStamp=blockTimeCtr;
+		insert(in, c);
 	}
-	if(in->isEmpty()) {
-		v=NULL;
+	if(in.empty()) {
+		v=nullptr;
 	} else {
-		v=in->findMin();
+		v = findMin(in);
 	}
 	return v;
 }
 Constraint *Block::findMinOutConstraint() {
-	if(out->isEmpty()) return NULL;
-	Constraint *v = out->findMin();
+	if(out.empty()) return nullptr;
+	Constraint *v = findMin(out);
 	while (v->left->block == v->right->block) {
-		out->deleteMin();
-		if(out->isEmpty()) return NULL;
-		v = out->findMin();
+		deleteMin(out);
+		if(out.empty()) return nullptr;
+		v = findMin(out);
 	}
 	return v;
 }
 void Block::deleteMinInConstraint() {
-	in->deleteMin();
-#ifdef RECTANGLE_OVERLAP_LOGGING
-	ofstream f(LOGFILE,ios::app);
-	f<<"deleteMinInConstraint... "<<endl;
-	f<<"  result: "<<*in<<endl;
-#endif
+	deleteMin(in);
 }
 void Block::deleteMinOutConstraint() {
-	out->deleteMin();
+	deleteMin(out);
 }
-inline bool Block::canFollowLeft(Constraint *c, Variable *last) {
+inline bool Block::canFollowLeft(const Constraint *c, const Variable *last) {
 	return c->left->block==this && c->active && last!=c->left;
 }
-inline bool Block::canFollowRight(Constraint *c, Variable *last) {
+inline bool Block::canFollowRight(const Constraint *c, const Variable *last) {
 	return c->right->block==this && c->active && last!=c->right;
 }
 
@@ -229,18 +256,16 @@ inline bool Block::canFollowRight(Constraint *c, Variable *last) {
 // in min_lm
 double Block::compute_dfdv(Variable *v, Variable *u, Constraint *&min_lm) {
 	double dfdv=v->weight*(v->position() - v->desiredPosition);
-	for(vector<Constraint*>::iterator it=v->out.begin();it!=v->out.end();it++) {
-		Constraint *c=*it;
+	for (Constraint *c : v->out) {
 		if(canFollowRight(c,u)) {
 			dfdv+=c->lm=compute_dfdv(c->right,v,min_lm);
-			if(min_lm==NULL||c->lm<min_lm->lm) min_lm=c;
+			if(min_lm==nullptr||c->lm<min_lm->lm) min_lm=c;
 		}
 	}
-	for(vector<Constraint*>::iterator it=v->in.begin();it!=v->in.end();it++) {
-		Constraint *c=*it;
+	for (Constraint *c : v->in) {
 		if(canFollowLeft(c,u)) {
 			dfdv-=c->lm=-compute_dfdv(c->left,v,min_lm);
-			if(min_lm==NULL||c->lm<min_lm->lm) min_lm=c;
+			if(min_lm==nullptr||c->lm<min_lm->lm) min_lm=c;
 		}
 	}
 	return dfdv;
@@ -251,26 +276,25 @@ double Block::compute_dfdv(Variable *v, Variable *u, Constraint *&min_lm) {
 // the constraint c to compute the lagrangian multiplier lm_c.
 // The top level v and r are variables between which we want to find the
 // constraint with the smallest lm.  
-// When we find r we pass NULL to subsequent recursive calls, 
-// thus r=NULL indicates constraints are not on the shortest path.
-// Similarly, m is initially NULL and is only assigned a value if the next
+// When we find r we pass nullptr to subsequent recursive calls, 
+// thus r=nullptr indicates constraints are not on the shortest path.
+// Similarly, m is initially nullptr and is only assigned a value if the next
 // variable to be visited is r or if a possible min constraint is returned from
-// a nested call (rather than NULL).
+// a nested call (rather than nullptr).
 // Then, the search for the m with minimum lm occurs as we return from
 // the recursion (checking only constraints traversed left-to-right 
 // in order to avoid creating any new violations).
 Block::Pair Block::compute_dfdv_between(Variable* r, Variable* v, Variable* u, 
 		Direction dir = NONE, bool changedDirection = false) {
 	double dfdv=v->weight*(v->position() - v->desiredPosition);
-	Constraint *m=NULL;
-	for(Cit it(v->in.begin());it!=v->in.end();it++) {
-		Constraint *c=*it;
+	Constraint *m=nullptr;
+	for (Constraint *c : v->in) {
 		if(canFollowLeft(c,u)) {
 			if(dir==RIGHT) { 
 				changedDirection = true; 
 			}
 			if(c->left==r) {
-			       	r=NULL; m=c; 
+			       	r=nullptr; m=c; 
 			}
 			Pair p=compute_dfdv_between(r,c->left,v,
 					LEFT,changedDirection);
@@ -279,14 +303,13 @@ Block::Pair Block::compute_dfdv_between(Variable* r, Variable* v, Variable* u,
 				m = p.second;
 		}
 	}
-	for(Cit it(v->out.begin());it!=v->out.end();it++) {
-		Constraint *c=*it;
+	for (Constraint *c : v->out) {
 		if(canFollowRight(c,u)) {
 			if(dir==LEFT) { 
 				changedDirection = true; 
 			}
 			if(c->right==r) {
-			       	r=NULL; m=c; 
+			       	r=nullptr; m=c; 
 			}
 			Pair p=compute_dfdv_between(r,c->right,v,
 					RIGHT,changedDirection);
@@ -304,15 +327,13 @@ Block::Pair Block::compute_dfdv_between(Variable* r, Variable* v, Variable* u,
 // traversing active constraint tree starting from v,
 // not back tracking over u
 void Block::reset_active_lm(Variable *v, Variable *u) {
-	for(vector<Constraint*>::iterator it=v->out.begin();it!=v->out.end();it++) {
-		Constraint *c=*it;
+	for (Constraint *c : v->out) {
 		if(canFollowRight(c,u)) {
 			c->lm=0;
 			reset_active_lm(c->right,v);
 		}
 	}
-	for(vector<Constraint*>::iterator it=v->in.begin();it!=v->in.end();it++) {
-		Constraint *c=*it;
+	for (Constraint *c : v->in) {
 		if(canFollowLeft(c,u)) {
 			c->lm=0;
 			reset_active_lm(c->left,v);
@@ -324,15 +345,15 @@ void Block::reset_active_lm(Variable *v, Variable *u) {
  * that most wants to split
  */
 Constraint *Block::findMinLM() {
-	Constraint *min_lm=NULL;
-	reset_active_lm(vars->front(),NULL);
-	compute_dfdv(vars->front(),NULL,min_lm);
+	Constraint *min_lm=nullptr;
+	reset_active_lm(vars.front(),nullptr);
+	compute_dfdv(vars.front(),nullptr,min_lm);
 	return min_lm;
 }
 Constraint *Block::findMinLMBetween(Variable* lv, Variable* rv) {
-	Constraint *min_lm=NULL;
-	reset_active_lm(vars->front(),NULL);
-	min_lm=compute_dfdv_between(rv,lv,NULL).second;
+	Constraint *min_lm=nullptr;
+	reset_active_lm(vars.front(),nullptr);
+	min_lm=compute_dfdv_between(rv,lv,nullptr).second;
 	return min_lm;
 }
 
@@ -340,13 +361,13 @@ Constraint *Block::findMinLMBetween(Variable* lv, Variable* rv) {
 // visited.  Starts from variable v and does not backtrack over variable u.
 void Block::populateSplitBlock(Block *b, Variable *v, Variable *u) {
 	b->addVariable(v);
-	for (vector<Constraint*>::iterator c=v->in.begin();c!=v->in.end();c++) {
-		if (canFollowLeft(*c,u))
-			populateSplitBlock(b, (*c)->left, v);
+	for (Constraint *c : v->in) {
+		if (canFollowLeft(c,u))
+			populateSplitBlock(b, c->left, v);
 	}
-	for (vector<Constraint*>::iterator c=v->out.begin();c!=v->out.end();c++) {
-		if (canFollowRight(*c,u)) 
-			populateSplitBlock(b, (*c)->right, v);
+	for (Constraint *c : v->out) {
+		if (canFollowRight(c,u))
+			populateSplitBlock(b, c->right, v);
 	}
 }
 /**
@@ -356,14 +377,15 @@ void Block::populateSplitBlock(Block *b, Variable *v, Variable *u) {
  * Returns the split constraint
  */
 Constraint* Block::splitBetween(Variable* vl, Variable* vr, Block* &lb, Block* &rb) {
-#ifdef RECTANGLE_OVERLAP_LOGGING
-	ofstream f(LOGFILE,ios::app);
-	f<<"  need to split between: "<<*vl<<" and "<<*vr<<endl;
-#endif
+	if (RECTANGLE_OVERLAP_LOGGING) {
+		ofstream f(LOGFILE,ios::app);
+		f<<"  need to split between: "<<*vl<<" and "<<*vr<<"\n";
+	}
 	Constraint *c=findMinLMBetween(vl, vr);
-#ifdef RECTANGLE_OVERLAP_LOGGING
-	f<<"  going to split on: "<<*c<<endl;
-#endif
+	if (RECTANGLE_OVERLAP_LOGGING) {
+		ofstream f(LOGFILE,ios::app);
+		f<<"  going to split on: "<<*c<<"\n";
+	}
 	split(lb,rb,c);
 	deleted = true;
 	return c;
@@ -387,17 +409,17 @@ void Block::split(Block* &l, Block* &r, Constraint* c) {
  */
 double Block::cost() {
 	double c = 0;
-	for (vector<Variable*>::iterator v=vars->begin();v!=vars->end();v++) {
-		double diff = (*v)->position() - (*v)->desiredPosition;
-		c += (*v)->weight * diff * diff;
+	for (const Variable *v : vars) {
+		const double diff = v->position() - v->desiredPosition;
+		c += v->weight * diff * diff;
 	}
 	return c;
 }
-ostream& operator <<(ostream &os, const Block &b)
-{
+
+std::ostream& operator <<(std::ostream &os, const Block &b) {
 	os<<"Block:";
-	for(vector<Variable*>::iterator v=b.vars->begin();v!=b.vars->end();v++) {
-		os<<" "<<**v;
+	for(const Variable *v : b.vars) {
+		os<<" "<<*v;
 	}
 	if(b.deleted) {
 		os<<" Deleted!";

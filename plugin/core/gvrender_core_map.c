@@ -1,79 +1,73 @@
-/* $Id$ $Revision$ */
-/* vim:set shiftwidth=4 ts=8: */
-
 /*************************************************************************
  * Copyright (c) 2011 AT&T Intellectual Property 
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
- * http://www.eclipse.org/legal/epl-v10.html
+ * https://www.eclipse.org/legal/epl-v10.html
  *
- * Contributors: See CVS logs. Details at http://www.graphviz.org/
+ * Contributors: Details at https://graphviz.org
  *************************************************************************/
 
 #include "config.h"
 
 #include <stdlib.h>
 
-#include "gvplugin_render.h"
-#include "gvplugin_device.h"
-#include "gvio.h"
+#include <gvc/gvplugin_render.h>
+#include <gvc/gvplugin_device.h>
+#include <gvc/gvio.h>
+#include <util/unreachable.h>
+#include <util/xml.h>
 
-extern char *xml_string(char *str);
-extern char *xml_url_string(char *str);
+enum { FORMAT_IMAP, FORMAT_ISMAP, FORMAT_CMAP, FORMAT_CMAPX, };
 
-typedef enum { FORMAT_IMAP, FORMAT_ISMAP, FORMAT_CMAP, FORMAT_CMAPX, } format_type;
+/// wrap `gvputs` to offer a `void *` first parameter
+static int gvputs_wrapper(void *state, const char *s) {
+  return gvputs(state, s);
+}
 
-static void map_output_shape (GVJ_t *job, map_shape_t map_shape, pointf * AF, int nump,
+// wrapper around `gv_xml_escape` to set flags for URL escaping
+static void xml_url_puts(GVJ_t *job, const char *s) {
+  const xml_flags_t flags = {0};
+  (void)gv_xml_escape(s, flags, gvputs_wrapper, job);
+}
+
+static void map_output_shape(GVJ_t *job, map_shape_t map_shape, pointf *AF, size_t nump,
                 char* url, char *tooltip, char *target, char *id)
 {
-    int i;
-
-    static point *A;
-    static int size_A;
-
     if (!AF || !nump)
 	return;
-
-    if (size_A < nump) {
-	size_A = nump + 10;
-	A = realloc(A, size_A * sizeof(point));
-    }
-    for (i = 0; i < nump; i++)
-	PF2P(AF[i], A[i]);
 
     if (job->render.id == FORMAT_IMAP && url && url[0]) {
         switch (map_shape) {
         case MAP_RECTANGLE:
 	    /* Y_GOES_DOWN so need UL to LR */
-            gvprintf(job, "rect %s %d,%d %d,%d\n", url,
-                A[0].x, A[1].y, A[1].x, A[0].y);
+            gvprintf(job, "rect %s %.0f,%.0f %.0f,%.0f\n", url, AF[0].x,
+                     AF[1].y, AF[1].x, AF[0].y);
             break;
         case MAP_CIRCLE:
-            gvprintf(job, "circle %s %d,%d,%d\n", url,
-                A[0].x, A[0].y, A[1].x-A[0].x);
+            gvprintf(job, "circle %s %.0f,%.0f,%.0f\n", url, AF[0].x, AF[0].y,
+                     AF[1].x - AF[0].x);
             break;
         case MAP_POLYGON:
             gvprintf(job, "poly %s", url);
-            for (i = 0; i < nump; i++)
-                gvprintf(job, " %d,%d", A[i].x, A[i].y);
+            for (size_t i = 0; i < nump; i++) {
+                gvprintf(job, " %.0f,%.0f", AF[i].x, AF[i].y);
+            }
             gvputs(job, "\n");
             break;
         default:
-            assert(0);
-            break;
+            UNREACHABLE();
         }
 
     } else if (job->render.id == FORMAT_ISMAP && url && url[0]) {
         switch (map_shape) {
         case MAP_RECTANGLE:
 	    /* Y_GOES_DOWN so need UL to LR */
-            gvprintf(job, "rectangle (%d,%d) (%d,%d) %s %s\n",
-                A[0].x, A[1].y, A[1].x, A[0].y, url, tooltip);
+            gvprintf(job, "rectangle (%.0f,%.0f) (%.0f,%.0f) %s %s\n",
+                     AF[0].x, AF[1].y, AF[1].x, AF[0].y, url, tooltip);
 	    break;
         default:
-            assert(0);
-            break;
+            UNREACHABLE();
         }
 
     } else if (job->render.id == FORMAT_CMAP || job->render.id == FORMAT_CMAPX) {
@@ -88,54 +82,49 @@ static void map_output_shape (GVJ_t *job, map_shape_t map_shape, pointf * AF, in
             gvputs(job, "<area shape=\"poly\"");
             break;
         default:
-            assert(0);
-            break;
+            UNREACHABLE();
         }
         if (id && id[0]) {
             gvputs(job, " id=\"");
-	    gvputs(job, xml_url_string(id));
+	    xml_url_puts(job, id);
 	    gvputs(job, "\"");
 	}
         if (url && url[0]) {
             gvputs(job, " href=\"");
-	    gvputs(job, xml_url_string(url));
+	    xml_url_puts(job, url);
 	    gvputs(job, "\"");
 	}
         if (target && target[0]) {
             gvputs(job, " target=\"");
-	    gvputs(job, xml_string(target));
+	    gvputs_xml(job, target);
 	    gvputs(job, "\"");
 	}
         if (tooltip && tooltip[0]) {
             gvputs(job, " title=\"");
-	    gvputs(job, xml_string(tooltip));
+	    gvputs_xml(job, tooltip);
 	    gvputs(job, "\"");
 	}
-        /*
-	 * alt text is intended for the visually impaired, but such
-	 * folk are not likely to be clicking around on a graph anyway.
-	 * IE on the PC platform (but not on Macs) incorrectly
-	 * uses (non-empty) alt strings instead of title strings for tooltips.
-	 * To make tooltips work and avoid this IE issue,
-	 * while still satisfying usability guidelines
-	 * that require that there is always an alt string,
-	 * we generate just an empty alt string.
-	 */
+        // FIXME:
+        //  - https://gitlab.com/graphviz/graphviz/-/issues/265
+        //  - https://gitlab.com/graphviz/graphviz/-/issues/2220
         gvputs(job, " alt=\"\"");
 
         gvputs(job, " coords=\"");
         switch (map_shape) {
         case MAP_CIRCLE:
-            gvprintf(job, "%d,%d,%d", A[0].x, A[0].y, A[1].x-A[0].x);
+            gvprintf(job, "%.0f,%.0f,%.0f", AF[0].x, AF[0].y,
+                     AF[1].x - AF[0].x);
             break;
         case MAP_RECTANGLE:
 	    /* Y_GOES_DOWN so need UL to LR */
-            gvprintf(job, "%d,%d,%d,%d", A[0].x, A[1].y, A[1].x, A[0].y);  
+            gvprintf(job, "%.0f,%.0f,%.0f,%.0f", AF[0].x, AF[1].y, AF[1].x,
+                     AF[0].y);
             break;
         case MAP_POLYGON:
-            gvprintf(job, "%d,%d", A[0].x, A[0].y);
-            for (i = 1; i < nump; i++)
-                gvprintf(job, ",%d,%d", A[i].x, A[i].y);
+            gvprintf(job, "%.0f,%.0f", AF[0].x, AF[0].y);
+            for (size_t i = 1; i < nump; i++) {
+                gvprintf(job, ",%.0f,%.0f", AF[i].x, AF[i].y);
+            }
             break;
         default:
             break;
@@ -150,32 +139,30 @@ static void map_output_shape (GVJ_t *job, map_shape_t map_shape, pointf * AF, in
 static void map_begin_page(GVJ_t * job)
 {
     obj_state_t *obj = job->obj;
-    char *s;
 
     switch (job->render.id) {
     case FORMAT_IMAP:
         gvputs(job, "base referer\n");
         if (obj->url && obj->url[0]) {
 	    gvputs(job, "default ");
-	    gvputs(job, xml_string(obj->url));
+	    gvputs_xml(job, obj->url);
 	    gvputs(job, "\n");
 	}
         break;
     case FORMAT_ISMAP:
         if (obj->url && obj->url[0]) {
 	    gvputs(job, "default ");
-	    gvputs(job, xml_string(obj->url));
+	    gvputs_xml(job, obj->url);
 	    gvputs(job, " ");
-	    gvputs(job, xml_string(agnameof(obj->u.g)));
+	    gvputs_xml(job, agnameof(obj->u.g));
 	    gvputs(job, "\n");
 	}
         break;
     case FORMAT_CMAPX:
-	s = xml_string(agnameof(obj->u.g));
 	gvputs(job, "<map id=\"");
-	gvputs(job, s);
+	gvputs_xml(job, agnameof(obj->u.g));
 	gvputs(job, "\" name=\"");
-	gvputs(job, s);
+	gvputs_xml(job, agnameof(obj->u.g));
 	gvputs(job, "\">\n");
         break;
     default:
@@ -203,50 +190,6 @@ static void map_end_page(GVJ_t * job)
 	break;
     }
 }
-
-#if 0
-static void map_begin_cluster(GVJ_t * job)
-{
-    obj_state_t *obj = job->obj;
-
-    gvprintf(job, "%% %s\n", obj->u.sg->name);
-
-    map_output_shape(job, obj->url_map_shape, obj->url_map_p, obj->url_map_n,
-	        obj->url, obj->tooltip, obj->target);
-}
-
-static void map_begin_node(GVJ_t * job)
-{
-    obj_state_t *obj = job->obj;
-
-    map_output_shape(job, obj->url_map_shape, obj->url_map_p,obj->url_map_n,
-	        obj->url, obj->tooltip, obj->target);
-}
-
-static void
-map_begin_edge(GVJ_t * job)
-{
-    obj_state_t *obj = job->obj;
-    int i, j = 0;
-
-    map_output_shape(job, obj->url_map_shape, obj->url_map_p, obj->url_map_n,
-	        obj->url, obj->tooltip, obj->target);
-    map_output_shape(job, MAP_RECTANGLE, obj->tailurl_map_p, 2,
-	        obj->tailurl, obj->tailtooltip, obj->tailtarget);
-    map_output_shape(job, MAP_RECTANGLE, obj->headurl_map_p, 2,
-	        obj->headurl, obj->headtooltip, obj->headtarget);
-    map_output_shape(job, MAP_RECTANGLE, obj->tailendurl_map_p,2, 
-	        obj->url, obj->tooltip, obj->target);
-    map_output_shape(job, MAP_RECTANGLE, obj->headendurl_map_p, 2,
-	        obj->url, obj->tooltip, obj->target);
-    for (i = 0; i < obj->url_bsplinemap_poly_n; i++) {
-        map_output_shape(job, MAP_POLYGON,
-		obj->url_bsplinemap_p+j, obj->url_bsplinemap_n[i],
-		obj->url, obj->tooltip, obj->target);
-	j += obj->url_bsplinemap_n[i];
-    }
-}
-#endif
 
 static void map_begin_anchor(GVJ_t * job, char *url, char *tooltip, char *target, char *id)
 {

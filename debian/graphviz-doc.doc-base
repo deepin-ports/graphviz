@@ -6,6 +6,6 @@ Abstract: Graphviz is a suite of graph drawing tools. This document provides
 Section: Graphics
 
 Format: HTML
-Index: /usr/share/doc/graphviz/html/index.html
-Files: /usr/share/doc/graphviz/html/*.html
-       /usr/share/doc/graphviz/html/info/*
+Index: /usr/share/doc/graphviz/index.html
+Files: /usr/share/doc/graphviz/*.html
+       /usr/share/doc/graphviz/info/*

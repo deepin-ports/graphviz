@@ -1,28 +1,28 @@
-/* $Id$ $Revision$ */
-/* vim:set shiftwidth=4 ts=8: */
-
 /*************************************************************************
  * Copyright (c) 2011 AT&T Intellectual Property
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
- * http://www.eclipse.org/legal/epl-v10.html
+ * https://www.eclipse.org/legal/epl-v10.html
  *
- * Contributors: See CVS logs. Details at http://www.graphviz.org/
+ * Contributors: Details at https://graphviz.org
  *************************************************************************/
 
 #include "config.h"
 
+#include <stdbool.h>
+#include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 
-#include "gvplugin_loadimage.h"
-#include "gvio.h"
+#include <gvc/gvplugin_loadimage.h>
+#include <gvc/gvio.h>
 
 #include <cairo.h>
 
-typedef enum {
+enum {
     FORMAT_PNG_CAIRO, FORMAT_PNG_PS,
-} format_type;
+};
 
 static cairo_status_t
 reader (void *closure, unsigned char *data, unsigned int length)
@@ -36,21 +36,19 @@ reader (void *closure, unsigned char *data, unsigned int length)
 
 static void cairo_freeimage(usershape_t *us)
 {
-    cairo_surface_destroy((cairo_surface_t*)(us->data));
+    cairo_surface_destroy(us->data);
 }
 
-static cairo_surface_t* cairo_loadimage(GVJ_t * job, usershape_t *us)
-{
+static cairo_surface_t *cairo_loadimage(usershape_t *us) {
     cairo_surface_t *surface = NULL; /* source surface */
 
-    assert(job);
     assert(us);
     assert(us->name);
     assert(us->name[0]);
 
     if (us->data) {
         if (us->datafree == cairo_freeimage)
-             surface = (cairo_surface_t*)(us->data); /* use cached data */
+             surface = us->data; /* use cached data */
         else {
              us->datafree(us);        /* free incompatible cache data */
              us->datafree = NULL;
@@ -72,7 +70,7 @@ static cairo_surface_t* cairo_loadimage(GVJ_t * job, usershape_t *us)
                 surface = NULL;
         }
         if (surface) {
-            us->data = (void*)surface;
+            us->data = surface;
             us->datafree = cairo_freeimage;
         }
 	gvusershape_file_release(us);
@@ -80,9 +78,9 @@ static cairo_surface_t* cairo_loadimage(GVJ_t * job, usershape_t *us)
     return surface;
 }
 
-static void pango_loadimage_cairo(GVJ_t * job, usershape_t *us, boxf b, boolean filled)
+static void pango_loadimage_cairo(GVJ_t * job, usershape_t *us, boxf b, bool filled)
 {
-    cairo_t *cr = (cairo_t *) job->context; /* target context */
+    cairo_t *cr = job->context; /* target context */
     cairo_surface_t *surface;	 /* source surface */
 
     assert(job);
@@ -90,7 +88,10 @@ static void pango_loadimage_cairo(GVJ_t * job, usershape_t *us, boxf b, boolean 
     assert(us->name);
     assert(us->name[0]);
 
-    surface = cairo_loadimage(job, us);
+    // suppress unused parameter warning
+    (void)filled;
+
+    surface = cairo_loadimage(us);
     if (surface) {
         cairo_save(cr);
 	cairo_translate(cr, b.LL.x, -b.UR.y);
@@ -101,23 +102,21 @@ static void pango_loadimage_cairo(GVJ_t * job, usershape_t *us, boxf b, boolean 
     }
 }
 
-static void pango_loadimage_ps(GVJ_t * job, usershape_t *us, boxf b, boolean filled)
+static void pango_loadimage_ps(GVJ_t * job, usershape_t *us, boxf b, bool filled)
 {
-    cairo_surface_t *surface; 	/* source surface */
-    cairo_format_t format;
-    int X, Y, x, y, stride;
-    unsigned char *data, *ix, alpha, red, green, blue;
+    // suppress unused parameter warning
+    (void)filled;
 
-    surface = cairo_loadimage(job, us);
+    cairo_surface_t *const surface = cairo_loadimage(us); // source surface
     if (surface) {
-       	format = cairo_image_surface_get_format(surface);
+       	const cairo_format_t format = cairo_image_surface_get_format(surface);
         if ((format != CAIRO_FORMAT_ARGB32) && (format != CAIRO_FORMAT_RGB24))
 	    return;
 
-	X = cairo_image_surface_get_width(surface);
-	Y = cairo_image_surface_get_height(surface);
-	stride = cairo_image_surface_get_stride(surface);
-	data = cairo_image_surface_get_data(surface);
+	const int X = cairo_image_surface_get_width(surface);
+	const int Y = cairo_image_surface_get_height(surface);
+	const int stride = cairo_image_surface_get_stride(surface);
+	const unsigned char *data = cairo_image_surface_get_data(surface);
 
         gvputs(job, "save\n");
 
@@ -125,15 +124,17 @@ static void pango_loadimage_ps(GVJ_t * job, usershape_t *us, boxf b, boolean fil
 	/* see parallel code in gd_loadimage_ps().  FIXME: refactor... */
         gvputs(job, "/myctr 0 def\n");
         gvputs(job, "/myarray [\n");
-        for (y = 0; y < Y; y++) {
+        for (int y = 0; y < Y; y++) {
 	    gvputs(job, "<");
-	    ix = data + y * stride;
-            for (x = 0; x < X; x++) {
-		/* FIXME - this code may have endian problems */
-		blue = *ix++;
-		green = *ix++;
-		red = *ix++;
-		alpha = *ix++;
+	    const unsigned char *ix = data + y * stride;
+            for (int x = 0; x < X; x++) {
+		uint32_t rgba;
+		memcpy(&rgba, ix, sizeof(rgba));
+		ix += sizeof(rgba);
+		const unsigned blue = rgba & 0xff;
+		const unsigned green = (rgba >> 8) & 0xff;
+		const unsigned red = (rgba >> 16) & 0xff;
+		const unsigned alpha = (rgba >> 24) & 0xff;
 		if (alpha < 0x7f)
 		    gvputs(job, "ffffff");
 		else

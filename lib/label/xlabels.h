@@ -1,17 +1,17 @@
-/* vim:set shiftwidth=4 ts=8: */
-
 /*************************************************************************
  * Copyright (c) 2011 AT&T Intellectual Property
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
- * http://www.eclipse.org/legal/epl-v10.html
+ * https://www.eclipse.org/legal/epl-v10.html
  *
- * Contributors: See CVS logs. Details at http://www.graphviz.org/
+ * Contributors: Details at https://graphviz.org
  *************************************************************************/
 
-#ifndef XLABELS_H
-#define XLABELS_H
+#pragma once
+
+#include <stdbool.h>
+#include <stddef.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -34,23 +34,16 @@ typedef struct {
 
 typedef struct {
     boxf bb;			/* Bounding box of all objects */
-    unsigned char force;	/* If true, all labels must be placed */
+    bool force; ///< if true, all labels must be placed
 } label_params_t;
 
-int placeLabels(object_t * objs, int n_objs,
-		xlabel_t * lbls, int n_lbls, label_params_t * params);
+int placeLabels(object_t *objs, size_t n_objs, xlabel_t *lbls, size_t n_lbls,
+                label_params_t *params);
 
 #ifdef XLABEL_INT
-#include <index.h>
-#include <logic.h>
+#include <label/index.h>
 #include <cdt.h>
 
-#ifndef XLNDSCALE
-#define XLNDSCALE 72.0
-#endif /*XLNDSCALE*/
-#ifndef XLNBR
-#define XLNBR    9
-#endif /*XLNBR*/
 #ifndef XLXDENOM
 #define XLXDENOM 8
 #endif /*XLXDENOM*/
@@ -58,9 +51,6 @@ int placeLabels(object_t * objs, int n_objs,
 #define XLYDENOM 2
 #endif /*XLYDENOM*/
 #define XLNBR    9
-#define XLCNR    4
-#define XLNDSCALE 72.0
-#define XLODCR   -1
 // indexes of neighbors in certain arrays
 // the node of interest is usually in node 4
 // 6 7 8
@@ -89,9 +79,9 @@ typedef struct obyh {
 
 typedef struct XLabels_s {
     object_t *objs;
-    int n_objs;
+    size_t n_objs;
     xlabel_t *lbls;
-    int n_lbls;
+    size_t n_lbls;
     label_params_t *params;
 
     Dt_t *hdx;			// splay tree keyed with hilbert spatial codes
@@ -104,5 +94,3 @@ typedef struct XLabels_s {
 #ifdef __cplusplus
 }
 #endif
-
-#endif				/*XLABELS_H */

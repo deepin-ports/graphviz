@@ -1,29 +1,30 @@
 Description: remove Debian references from upstream
  Don't alter files under debian/ directory.
 Author: Laszlo Boszormenyi (GCS) <gcs@debian.org>
-Forwarded: not-needed
-Last-Update: 2019-09-01
+Last-Update: 2025-12-14
 
 ---
 
---- graphviz-2.42.1.orig/Makefile.am
-+++ graphviz-2.42.1/Makefile.am
-@@ -45,7 +45,7 @@ EXTRA_DIST = $(txt) $(html) graphviz.spe
- 	graphviz.7 Doxyfile.in Doxyfile awk \
- 	config/config_perl.pl config/config_python.py \
- 	config/config_ruby.rb config/config_tcl.tcl dot.demo  plugin.demo \
--	macosx windows debian redhat graphviz.sln
-+	macosx windows redhat graphviz.sln
+--- a/Makefile.am
++++ b/Makefile.am
+@@ -36,7 +36,7 @@ EXTRA_DIST = graphviz.spec \
+ 	Doxyfile.in Doxyfile \
+ 	config/config_perl.pl \
+ 	config/config_ruby.rb dot.demo plugin.demo \
+-	macosx windows debian redhat
++	macosx windows redhat
  
  .PHONY: rpm
  rpm: dist
---- graphviz-2.42.1.orig/configure.ac
-+++ graphviz-2.42.1/configure.ac
-@@ -2886,7 +2886,6 @@ AM_CONDITIONAL(HAVE_CRITERION, test "$us
+--- a/configure.ac
++++ b/configure.ac
+@@ -2048,9 +2048,6 @@ AM_CONDITIONAL(WITH_CGRAPH, [true])
+ 
  # Generate Makefiles
- #	tests/regression_tests/vuln/Makefile was removed
  AC_CONFIG_FILES(Makefile
 -	debian/changelog
+-	debian/graphviz.install
+-	debian/libgv-php5.install
  	doc/Makefile
  	doc/info/Makefile
  	doc/schema/Makefile

@@ -1,16 +1,19 @@
-/* $Id$ $Revision$ */
-/* vim:set shiftwidth=4 ts=8: */
-
 /*************************************************************************
  * Copyright (c) 2011 AT&T Intellectual Property 
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
- * http://www.eclipse.org/legal/epl-v10.html
+ * https://www.eclipse.org/legal/epl-v10.html
  *
- * Contributors: See CVS logs. Details at http://www.graphviz.org/
+ * Contributors: Details at https://graphviz.org
  *************************************************************************/
 
+#include "config.h"
+
+#include <limits.h>
+#include <stddef.h>
+#include <util/alloc.h>
+#include <util/list.h>
 #include "selectionfuncs.h"
 #include "topviewfuncs.h"
 #include "smyrna_utils.h"
@@ -20,7 +23,7 @@ static void select_node(Agraph_t* g,Agnode_t*  obj,int reverse)
     Agsym_t* sel_attr = GN_selected(g);
 
     if(!sel_attr)
-	sel_attr = GN_selected(g) = agattr(g, AGNODE,"selected","0");
+	sel_attr = GN_selected(g) = agattr_text(g, AGNODE,"selected","0");
     if(!reverse)
     {
         agxset(obj,sel_attr,"1");
@@ -49,7 +52,7 @@ static void select_edge(Agraph_t* g,Agedge_t*  obj,int reverse)
     Agsym_t* sel_attr = GE_selected(g); 
 
     if (!sel_attr)
-	sel_attr = GE_selected(g) = agattr(g, AGEDGE,"selected","0");
+	sel_attr = GE_selected(g) = agattr_text(g, AGEDGE,"selected","0");
     if (!reverse)
     {
 	agxset(obj,sel_attr,"1");
@@ -61,7 +64,6 @@ static void select_edge(Agraph_t* g,Agedge_t*  obj,int reverse)
 	{
 	    agxset(obj,sel_attr,"0");
 	    ED_selected(obj) = 0;
-	    ED_printLabel(obj) = 0;
 	}
 	else
 	{
@@ -73,9 +75,8 @@ static void select_edge(Agraph_t* g,Agedge_t*  obj,int reverse)
 
 }
 
-
-static void pick_objects_in_rect(Agraph_t* g,GLfloat x1,GLfloat y1,GLfloat x2,GLfloat y2)
-{
+static void pick_objects_in_rect(Agraph_t *g, float x1, float y1, float x2,
+                                 float y2) {
     Agnode_t *v;
     Agedge_t *e;
     glCompPoint posT;
@@ -84,15 +85,14 @@ static void pick_objects_in_rect(Agraph_t* g,GLfloat x1,GLfloat y1,GLfloat x2,GL
      
     for (v = agfstnode(g); v; v = agnxtnode(g, v)) 
     {
-	if(view->Topview->sel.selectNodes==1)
-	{
+	if (view->Topview->sel.selectNodes) {
 	    posN = ND_A(v);
 	    if(!ND_visible(v))
 		continue;
 	    if(is_point_in_rectangle(posN.x,posN.y,x1,y1,x2-x1,y2-y1) )
 		select_node(g,v,0);
 	}
-	if(view->Topview->sel.selectEdges==1) {
+	if (view->Topview->sel.selectEdges) {
 	    for (e = agfstout(g, v); e; e = agnxtout(g, e)) 
 	    {
 		posT = ED_posTail(e);
@@ -109,62 +109,50 @@ static void pick_objects_in_rect(Agraph_t* g,GLfloat x1,GLfloat y1,GLfloat x2,GL
 
 static void* pick_object(Agraph_t* g,glCompPoint p)
 {
-    Agnode_t *v;
-    Agedge_t *e;
-    glCompPoint posT;
-    glCompPoint posH;
-    glCompPoint posN;
-    int defaultNodeShape;
-    float dist=999999999;
-    GLfloat nd; /*node distance to point*/
-    GLfloat ed; /*edge distance to point*/
-    GLfloat nodeSize=0;
-    void* rv=(void*)0;
+    double dist = DBL_MAX;
+    double nodeSize = 0;
+    void *rv = NULL;
 
-    defaultNodeShape=getAttrBool(g,g,"defaultnodeshape",0);
+    const int defaultNodeShape = getAttrBool(g, g, "defaultnodeshape", 0);
 
     if(defaultNodeShape==0)
         nodeSize=GetOGLDistance(view->nodeScale*view->Topview->fitin_zoom/view->zoom);
 
-    for (v = agfstnode(g); v; v = agnxtnode(g, v)) 
-    {
+    for (Agnode_t *v = agfstnode(g); v; v = agnxtnode(g, v)) {
 	if(!ND_visible(v))
 	    continue;
-	posN = ND_A(v);
+	const glCompPoint posN = ND_A(v);
 	if(defaultNodeShape==1)
 	{
 	    nodeSize = ND_size(v);
 	}
 
-	nd=distBetweenPts(posN,p,nodeSize);
+	// node distance to point
+	const double nd = distBetweenPts(posN , p, nodeSize);
 	if( nd < dist )
 	{
 	    rv=v;dist=nd;
 	}
 
-	for (e = agfstout(g, v); e; e = agnxtout(g, e)) 
-	{
-	    posT = ED_posTail(e);
-	    posH = ED_posHead(e);
-	    ed=point_to_lineseg_dist(p, posT,posH);
+	for (Agedge_t *e = agfstout(g, v); e; e = agnxtout(g, e)) {
+	    const glCompPoint posT = ED_posTail(e);
+	    const glCompPoint posH = ED_posHead(e);
+	    const double ed = point_to_lineseg_dist(p, posT, posH);
 	    if( ed < dist ) {rv=e;dist=ed;}
 	}
     }
     return rv;
 }
 
-void pick_object_xyz(Agraph_t* g,topview* t,GLfloat x,GLfloat y,GLfloat z) 
-{
-    glCompPoint p;
-    void* a;
-    p.x=x;p.y=y;p.z=z;
-    a=pick_object(g,p);
+void pick_object_xyz(Agraph_t *g, topview *t, float x, float y, float z) {
+    const glCompPoint p = {.x = x, .y = y, .z = z};
+    void *const a = pick_object(g, p);
     if (!a)
 	return;
     if(agobjkind(a)==AGNODE)
     {
 	select_node(g,a,1);	
-	ND_printLabel((Agnode_t*)a) = 1;
+	ND_printLabel(a) = 1;
 
 	cacheSelectedNodes(g,t);
 
@@ -173,16 +161,14 @@ void pick_object_xyz(Agraph_t* g,topview* t,GLfloat x,GLfloat y,GLfloat z)
     {
 	select_edge(g,a,1);	
 	cacheSelectedEdges(g,t);
-	ED_printLabel((Agedge_t*)a) = 1;
     }
 }
 void pick_objects_rect(Agraph_t* g) 
 {
-
-    GLfloat x1;
-    GLfloat y1;
-    GLfloat x2;
-    GLfloat y2;
+    float x1;
+    float y1;
+    float x2;
+    float y2;
     if(view->mouse.GLfinalPos.x > view->mouse.GLinitPos.x)
     {
         x1=view->mouse.GLinitPos.x;
@@ -218,9 +204,9 @@ void deselect_all(Agraph_t* g)
     Agsym_t* nsel_attr = GN_selected(g);
     Agsym_t* esel_attr = GE_selected(g);
     if(!nsel_attr)
-	nsel_attr = GN_selected(g) = agattr(g, AGNODE,"selected","0");
+	nsel_attr = GN_selected(g) = agattr_text(g, AGNODE,"selected","0");
     if(!esel_attr)
-	esel_attr = GE_selected(g) = agattr(g, AGEDGE,"selected","0");
+	esel_attr = GE_selected(g) = agattr_text(g, AGEDGE,"selected","0");
     for (v = agfstnode(g); v; v = agnxtnode(g, v)) 
     {
 	agxset(v,nsel_attr,"0");
@@ -231,34 +217,24 @@ void deselect_all(Agraph_t* g)
 	{
 	    agxset(e,esel_attr,"0");
 	    ED_selected(e) = 0;
-	    ED_printLabel(e) = 0;
 	}
     }
     cacheSelectedNodes(g,view->Topview);
     cacheSelectedEdges(g,view->Topview);
 }
 
-void clear_selpoly(glCompPoly* sp)
-{
-    sp->pts=realloc(sp->pts,0);
-    sp->cnt=0;
-}
-static int close_poly(glCompPoly* selPoly,glCompPoint pt)
-{
+static int close_poly(glCompPoly_t *selPoly, glCompPoint pt) {
     /* int i=0; */
-    float EPS=GetOGLDistance(3);
-    if (selPoly->cnt < 2)
+    const double EPS = GetOGLDistance(3.0);
+    if (LIST_SIZE(selPoly) < 2)
 	return 0;
-    if(
-	( (selPoly->pts[0].x-pt.x) < EPS) &&
-	( (selPoly->pts[0].y-pt.y) < EPS))
+    if (LIST_FRONT(selPoly)->x - pt.x < EPS &&
+        LIST_FRONT(selPoly)->y - pt.y < EPS)
 	return 1;
     return 0;
 }
 
-
-static void select_polygon (Agraph_t* g,glCompPoly* selPoly)
-{
+static void select_polygon(Agraph_t *g, glCompPoly_t *selPoly) {
     Agnode_t *v;
     glCompPoint posN;
      
@@ -271,21 +247,15 @@ static void select_polygon (Agraph_t* g,glCompPoly* selPoly)
     cacheSelectedNodes(g,view->Topview);
 }
 
-
-void add_selpoly(Agraph_t* g,glCompPoly* selPoly,glCompPoint pt)
-{
+void add_selpoly(Agraph_t *g, glCompPoly_t *selPoly, glCompPoint pt) {
     if(!close_poly(selPoly,pt))
     {
-	selPoly->cnt ++;
-	selPoly->pts=realloc(selPoly->pts,sizeof(glCompPoint)*selPoly->cnt);
-	selPoly->pts[selPoly->cnt-1].x=pt.x;
-	selPoly->pts[selPoly->cnt-1].y=pt.y;
-	selPoly->pts[selPoly->cnt-1].z=0;
+	LIST_APPEND(selPoly, ((glCompPoint){.x = pt.x, .y = pt.y}));
     }
     else
     {
 	select_polygon (g,selPoly);
-	clear_selpoly(selPoly);	
+	LIST_FREE(selPoly);	
     }
 }
 

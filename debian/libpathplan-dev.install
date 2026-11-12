@@ -1,0 +1,5 @@
+usr/include/graphviz/pathgeom.h
+usr/include/graphviz/pathplan.h
+usr/lib/${DEB_HOST_MULTIARCH}/libpathplan*.a
+usr/lib/${DEB_HOST_MULTIARCH}/libpathplan*.so
+usr/lib/${DEB_HOST_MULTIARCH}/pkgconfig/libpathplan.pc

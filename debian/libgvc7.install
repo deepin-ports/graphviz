@@ -1,0 +1,4 @@
+# To be changed into an in extension list if plugins are added
+usr/lib/${DEB_HOST_MULTIARCH}/graphviz/libgvplugin_core.so.*
+usr/lib/${DEB_HOST_MULTIARCH}/graphviz/libgvplugin_dot_layout.so.*
+usr/lib/${DEB_HOST_MULTIARCH}/libgvc*.so.7*

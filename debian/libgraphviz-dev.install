@@ -1,10 +1,25 @@
-usr/include/graphviz
-usr/lib/*/pkgconfig
-usr/lib/*/*.so
-usr/lib/*/graphviz/*.so
+usr/include/graphviz/arith.h
+usr/include/graphviz/color.h
+usr/include/graphviz/geom.h
+usr/include/graphviz/graphviz_version.h
+usr/include/graphviz/pack.h
+usr/include/graphviz/textspan.h
+usr/include/graphviz/types.h
+usr/include/graphviz/usershape.h
+#usr/lib/${DEB_HOST_MULTIARCH}/pkgconfig
+#usr/lib/${DEB_HOST_MULTIARCH}/*.so
+#usr/lib/${DEB_HOST_MULTIARCH}/graphviz/*.so
+#usr/lib/${DEB_HOST_MULTIARCH}/*.a
+#usr/lib/${DEB_HOST_MULTIARCH}/graphviz/*.a
+usr/lib/${DEB_HOST_MULTIARCH}/graphviz/guile/libgv_guile.a
+usr/lib/${DEB_HOST_MULTIARCH}/graphviz/lua/libgv_lua.a
+usr/lib/${DEB_HOST_MULTIARCH}/graphviz/perl/libgv_perl.a
+usr/lib/${DEB_HOST_MULTIARCH}/graphviz/ruby/libgv_ruby.a
 
 # usr/share/man/man3/*  w/o  gv_*.3 (bindings)
 usr/share/man/man3/cdt.3
 usr/share/man/man3/cgraph.3
-usr/share/man/man3/pathplan.3
+usr/share/man/man3/expr.3
 usr/share/man/man3/gvc.3
+usr/share/man/man3/pack.3
+usr/share/man/man3/pathplan.3

@@ -1,14 +1,11 @@
-/* $Id$ $Revision$ */
-/* vim:set shiftwidth=4 ts=8: */
-
 /*************************************************************************
  * Copyright (c) 2011 AT&T Intellectual Property 
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
- * http://www.eclipse.org/legal/epl-v10.html
+ * https://www.eclipse.org/legal/epl-v10.html
  *
- * Contributors: See CVS logs. Details at http://www.graphviz.org/
+ * Contributors: Details at https://graphviz.org
  *************************************************************************/
 
 /*
@@ -20,49 +17,48 @@
 
 #include "config.h"
 
-#ifdef GVDLL
-#define _BLD_sfio 1
-#endif
-
-#include <exlib.h>
+#include <expr/exlib.h>
+#include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
+
+/// destructor for `Exid_t`
+static void free_exid(void *p) {
+  Exid_t *const exid = p;
+
+  // the `Exid_t` itself was allocated through the program’s `vm` allocator, so
+  // will be automatically deallocated, but we need to manually clean up the
+  // `local` set that is used for arrays
+  dtclose(exid->local);
+}
 
 /*
  * allocate a new expression program environment
  */
 
 Expr_t*
-exopen(register Exdisc_t* disc)
+exopen(Exdisc_t* disc)
 {
-	register Expr_t*	program;
-	register Exid_t*	sym;
-	int			debug;
+	Expr_t*	program;
+	Exid_t*	sym;
 
-	if (!(program = newof(0, Expr_t, 1, 0)))
+	if (!(program = calloc(1, sizeof(Expr_t))))
 		return 0;
-	program->symdisc.key = offsetof(Exid_t, name);
-	debug = getenv("VMDEBUG") != 0;
-	if (!(program->symbols = dtopen(&program->symdisc, Dtset)) ||
-	    !(program->tmp = sfstropen()) ||
-	    !(program->vm = (debug ? vmopen(Vmdcsbrk, Vmdebug, VM_DBCHECK|VM_DBABORT) : vmopen(Vmdcheap, Vmbest, 0))) ||
-	    !(program->ve = (debug ? vmopen(Vmdcsbrk, Vmdebug, VM_DBCHECK|VM_DBABORT) : vmopen(Vmdcheap, Vmbest, 0))))
-	{
-		exclose(program, 1);
+	static Dtdisc_t symdisc = {.key = offsetof(Exid_t, name), .freef = free_exid};
+	if (!(program->symbols = dtopen(&symdisc, Dtset))) {
+		exclose(program);
 		return 0;
 	}
 	program->id = "libexpr:expr";
 	program->disc = disc;
 	setcontext(program);
-	program->file[0] = sfstdin;
-	program->file[1] = sfstdout;
-	program->file[2] = sfstderr;
-	strcpy(program->main.name, "main");
-	program->main.lex = PROCEDURE;
-	program->main.index = PROCEDURE;
+	program->file[0] = stdin;
+	program->file[1] = stdout;
+	program->file[2] = stderr;
+	program->main = (Exid_t){.lex = PROCEDURE, .index = PROCEDURE, .name = "main"};
 	dtinsert(program->symbols, &program->main);
-	if (!(disc->flags & EX_PURE))
-		for (sym = exbuiltin; *sym->name; sym++)
-			dtinsert(program->symbols, sym);
+	for (sym = exbuiltin; *sym->name; sym++)
+		dtinsert(program->symbols, sym);
 	if ((sym = disc->symbols))
 		for (; *sym->name; sym++)
 			dtinsert(program->symbols, sym);

@@ -1,0 +1,4 @@
+usr/include/graphviz/xdot.h
+usr/lib/${DEB_HOST_MULTIARCH}/libxdot*.a
+usr/lib/${DEB_HOST_MULTIARCH}/libxdot*.so
+usr/lib/${DEB_HOST_MULTIARCH}/pkgconfig/libxdot.pc

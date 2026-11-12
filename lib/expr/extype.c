@@ -1,14 +1,11 @@
-/* $Id$ $Revision$ */
-/* vim:set shiftwidth=4 ts=8: */
-
 /*************************************************************************
  * Copyright (c) 2011 AT&T Intellectual Property 
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
- * http://www.eclipse.org/legal/epl-v10.html
+ * https://www.eclipse.org/legal/epl-v10.html
  *
- * Contributors: See CVS logs. Details at http://www.graphviz.org/
+ * Contributors: Details at https://graphviz.org
  *************************************************************************/
 
 /*
@@ -18,18 +15,15 @@
  * expression library C program generator
  */
 
-#include "exlib.h"
+#include "config.h"
 
-#define str(s)		# s
-#define xstr(s)		str(s)
+#include <expr/exlib.h>
 
 /*
  * return C type name for type
  */
 
-char*
-extype(int type)
-{
+char *extype(long int type) {
 	switch (type)
 	{
 	case FLOATING:
@@ -37,7 +31,7 @@ extype(int type)
 	case STRING:
 		return "char*";
 	case UNSIGNED:
-		return xstr(uintmax_t);
+		return "uintmax_t";
 	}
-	return xstr(intmax_t);
+	return "intmax_t";
 }

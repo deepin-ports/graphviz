@@ -1,7 +1,7 @@
-version=4
-https://graphviz.org/download/source/ .*/@PACKAGE@@ANY_VERSION@@ARCHIVE_EXT@
-https://gitlab.com/graphviz/@PACKAGE@/-/tags .*releases/@ANY_VERSION@
-https://qa.debian.org/cgi-bin/fakeupstream.cgi?upstream=gitlab_releases/graphviz/graphviz \
-  .*/@PACKAGE@@ANY_VERSION@@ARCHIVE_EXT@
-opts="searchmode=plain" https://gitlab.com/api/v4/projects/4207231/releases \
-  [^"]*/@PACKAGE@@ANY_VERSION@@ARCHIVE_EXT@
+Version: 5
+
+Source: https://graphviz.org/download/source/
+Matching-Pattern: .*/@PACKAGE@@ANY_VERSION@@ARCHIVE_EXT@
+
+Source: https://gitlab.com/graphviz/@PACKAGE@/-/tags
+Matching-Pattern: .*releases/@ANY_VERSION@

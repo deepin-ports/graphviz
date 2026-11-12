@@ -1,38 +1,45 @@
-/* $Id$ $Revision$ */
-/* vim:set shiftwidth=4 ts=8: */
-
 /*************************************************************************
  * Copyright (c) 2011 AT&T Intellectual Property 
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
- * http://www.eclipse.org/legal/epl-v10.html
+ * https://www.eclipse.org/legal/epl-v10.html
  *
- * Contributors: See CVS logs. Details at http://www.graphviz.org/
+ * Contributors: Details at https://graphviz.org
  *************************************************************************/
 
 #include "config.h"
+#include "gdioctx_wrapper.h"
 
-#include "gvplugin_device.h"
-#include "gvio.h"
+#include <assert.h>
+#include <gvc/gvplugin_device.h>
+#include <gvc/gvio.h>
+#include <limits.h>
 
-#include "gd.h"
+#include <gd.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <string.h>
 
 int gvdevice_gd_putBuf (gdIOCtx *context, const void *buffer, int len)
 {
-    return gvwrite((GVJ_t *)(context->tell), buffer, len);
+    gd_context_t *gd_context = get_containing_context(context);
+    assert(len >= 0);
+    const size_t result = gvwrite(gd_context->job, buffer, (size_t)len);
+    assert(result <= (size_t)len);
+    return (int)result;
 }
 
-/* used by gif output */
 void gvdevice_gd_putC (gdIOCtx *context, int C)
 {
-    char c = C;
+    gd_context_t *gd_context = get_containing_context(context);
+    char c = (char)C;
 
-    gvwrite((GVJ_t *)(context->tell), &c, 1);
+    gvwrite(gd_context->job, &c, 1);
 }
 
 #ifdef HAVE_PANGOCAIRO
-typedef enum {
+enum {
 	FORMAT_GIF,
 	FORMAT_JPEG,
 	FORMAT_PNG,
@@ -40,34 +47,53 @@ typedef enum {
 	FORMAT_GD,
 	FORMAT_GD2,
 	FORMAT_XBM,
-} format_type;
+};
+
+/// convert a double to unsigned, clamping as necessary
+static unsigned d2u(double v) {
+  if (v > UINT_MAX) {
+    return UINT_MAX;
+  }
+  if (v < 0) {
+    return 0;
+  }
+  const double rounded = round(v);
+  return (unsigned)rounded;
+}
 
 static void gd_format(GVJ_t * job)
 {
     gdImagePtr im;
-    unsigned int x, y, color, alpha;
-    unsigned int *data = (unsigned int*)(job->imagedata);
+    unsigned int x, y;
+    const unsigned char *data = job->imagedata;
     unsigned int width = job->width;
     unsigned int height = job->height;
-    gdIOCtx ctx;
+    gd_context_t gd_context;
+    memset(&gd_context, 0, sizeof(gd_context));
 
-    ctx.putBuf = gvdevice_gd_putBuf;
-    ctx.putC = gvdevice_gd_putC;
-    ctx.tell = (void*)job;    /* hide *job here */
+    gd_context.ctx.putBuf = gvdevice_gd_putBuf;
+    gd_context.ctx.putC = gvdevice_gd_putC;
+    gd_context.job = job;
 
-    im = gdImageCreateTrueColor(width, height);
+    assert(width <= INT_MAX);
+    assert(height <= INT_MAX);
+    im = gdImageCreateTrueColor((int)width, (int)height);
     switch (job->device.id) {
 #ifdef HAVE_GD_PNG
     case FORMAT_PNG:
         for (y = 0; y < height; y++) {
             for (x = 0; x < width; x++) {
-                color = *data++;
-	        /* gd's max alpha is 127 */
-	        /*   so right-shift 25 to lose lsb of alpha */
-	        alpha = (color >> 25) & 0x7f;
-	        im->tpixels[y][x] = (color & 0xffffff) | ((0x7f - alpha) << 24);
+                const int r = *data++;
+                const int g = *data++;
+                const int b = *data++;
+	        // gd’s alpha is 7-bit, so scale down ÷2 from our 8-bit
+                const int alpha = *data++ >> 1;
+                const int color = r | (g << 8) | (b << 16) | ((0x7f - alpha) << 24);
+	        im->tpixels[y][x] = color;
 	    }
         }
+        gdImageResolutionX(im) = d2u(job->dpi.x);
+        gdImageResolutionY(im) = d2u(job->dpi.y);
         break;
 #endif
     default:
@@ -75,15 +101,18 @@ static void gd_format(GVJ_t * job)
 #define TRANSPARENT 0x7ffffffe
 
         gdImageColorTransparent(im, TRANSPARENT);
-        gdImageAlphaBlending(im, FALSE);
+        gdImageAlphaBlending(im, false);
         for (y = 0; y < height; y++) {
             for (x = 0; x < width; x++) {
-                color = *data++;
-	        /* gd's max alpha is 127 */
-	        /*   so right-shift 25 to lose lsb of alpha */
-	        if ((alpha = (color >> 25) & 0x7f) >= 0x20)
+                const int r = *data++;
+                const int g = *data++;
+                const int b = *data++;
+	        // gd’s alpha is 7-bit, so scale down ÷2 from our 8-bit
+                const int alpha = *data++ >> 1;
+                const int color = r | (g << 8) | (b << 16) | ((0x7f - alpha) << 24);
+	        if (alpha >= 0x20)
 		    /* if not > 75% transparent */
-		    im->tpixels[y][x] = (color & 0xffffff) | ((0x7f - alpha) << 24);
+		    im->tpixels[y][x] = color;
 	        else
 		    im->tpixels[y][x] = TRANSPARENT;
 	    }
@@ -92,12 +121,10 @@ static void gd_format(GVJ_t * job)
     }
 
     switch (job->device.id) {
-#ifdef HAVE_GD_GIF
     case FORMAT_GIF:
 	gdImageTrueColorToPalette(im, 0, 256);
-	gdImageGifCtx(im, &ctx);
+	gdImageGifCtx(im, &gd_context.ctx);
         break;
-#endif
 
 #ifdef HAVE_GD_JPEG
     case FORMAT_JPEG:
@@ -111,14 +138,14 @@ static void gd_format(GVJ_t * job)
 	 * library documentation for more details.
 	 */ 
 #define JPEG_QUALITY -1
-	gdImageJpegCtx(im, &ctx, JPEG_QUALITY);
+	gdImageJpegCtx(im, &gd_context.ctx, JPEG_QUALITY);
 	break;
 #endif
 
 #ifdef HAVE_GD_PNG
     case FORMAT_PNG:
         gdImageTrueColorToPalette(im, 0, 256);
-	gdImagePngCtx(im, &ctx);
+	gdImagePngCtx(im, &gd_context.ctx);
         break;
 #endif
 
@@ -133,23 +160,12 @@ static void gd_format(GVJ_t * job)
 	gdImageGd2(im, job->output_file, GD2_CHUNKSIZE, GD2_COMPRESSED);
 	break;
 
-#ifdef HAVE_GD_GIF
     case FORMAT_WBMP:
 	{
 	    /* Use black for the foreground color for the B&W wbmp image. */
             int black = gdImageColorResolveAlpha(im, 0, 0, 0, gdAlphaOpaque);
-	    gdImageWBMPCtx(im, black, &ctx);
+	    gdImageWBMPCtx(im, black, &gd_context.ctx);
 	}
-	break;
-#endif
-
-#if 0
-/* libgd only supports reading of xpm files */
-#ifdef HAVE_GD_XPM
-    case FORMAT_XBM:
-	gdImageXbm(im, job->output_file);
-#endif
-#endif
 	break;
     default:
 	break;
@@ -184,11 +200,8 @@ static gvdevice_features_t device_features_gd_no_writer = {
 
 gvplugin_installed_t gvdevice_gd_types[] = {
 #ifdef HAVE_PANGOCAIRO
-
-#ifdef HAVE_GD_GIF
     {FORMAT_GIF, "gif:cairo", 10, &gd_engine, &device_features_gd},
     {FORMAT_WBMP, "wbmp:cairo", 5, &gd_engine, &device_features_gd},
-#endif
 
 #ifdef HAVE_GD_JPEG
     {FORMAT_JPEG, "jpe:cairo", 5, &gd_engine, &device_features_gd},
@@ -202,13 +215,6 @@ gvplugin_installed_t gvdevice_gd_types[] = {
 
     {FORMAT_GD, "gd:cairo", 5, &gd_engine, &device_features_gd_no_writer},
     {FORMAT_GD2, "gd2:cairo", 5, &gd_engine, &device_features_gd_no_writer},
-
-#if 0
-/* libgd only supports reading of xpm files */
-#ifdef HAVE_GD_XPM
-    {FORMAT_XBM, "xbm:cairo", 5, &gd_engine, &device_features_gd},
-#endif
-#endif
 
 #endif
     {0, NULL, 0, NULL, NULL}

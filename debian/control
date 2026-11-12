@@ -2,12 +2,11 @@ Source: graphviz
 Section: graphics
 Priority: optional
 Maintainer: Laszlo Boszormenyi (GCS) <gcs@debian.org>
-Standards-Version: 4.7.0
+Standards-Version: 4.7.2
 Build-Depends: tk-dev,
  tcl-dev,
  debhelper-compat (= 13),
  dh-python,
- python3-setuptools,
  libfreetype-dev,
  zlib1g-dev,
  libjpeg-dev,
@@ -23,30 +22,36 @@ Build-Depends: tk-dev,
  guile-3.0-dev,
  groff-base,
  ghostscript,
- lua5.2,
- liblua5.2-dev,
+ lua5.4,
+ liblua5.4-dev,
  ruby [!ia64],
- ruby-dev (>= 1:2.2) [!ia64],
+ ruby-dev [!ia64],
  libargon2-dev,
  libsodium-dev,
  libxml2-dev,
- python3-dev,
+ libpython3-dev,
+ python3-dev:any,
  libcairo2-dev,
  libpango1.0-dev,
- d-shlibs,
+ libpoppler-glib-dev,
  chrpath,
- libgtk2.0-dev,
+ libgs-dev,
  libgts-dev,
  libann-dev,
- librsvg2-dev,
- libwebp-dev
+ librsvg2-dev [!alpha !hppa !hurd-amd64 !hurd-i386 !ia64 !m68k !sh4],
+ libwebp-dev,
+ libdevil-dev,
+ libglut-dev,
+ doxygen,
+ qt6-base-dev
 Build-Conflicts: tcl8.3, tcl8.4, tcl8.5
 Homepage: https://www.graphviz.org/
 
 Package: graphviz
 Architecture: any
 Multi-Arch: foreign
-Depends: ${shlibs:Depends}, libgvc6 (>= 2.42.1), ${misc:Depends}
+Depends: ${shlibs:Depends}, libgvc7, libgvplugin-gd8, libgvplugin-pango8, ${misc:Depends}
+Breaks: libgraphviz-dev (<< 8.1.0-1~)
 Recommends: fonts-liberation
 Suggests: gsfonts, graphviz-doc
 Description: rich set of graph drawing tools
@@ -72,176 +77,24 @@ Description: rich set of graph drawing tools
  .
  This package contains the command-line tools.
 
-Package: libgv-guile
+Package: graphviz-tools
 Architecture: any
-Multi-Arch: same
-Section: interpreters
+Multi-Arch: foreign
 Depends: ${shlibs:Depends}, ${misc:Depends}
-Description: Guile bindings for graphviz
+Breaks: graphviz (<< 8.1.0-1~)
+Replaces: graphviz (<< 8.1.0-1~)
+Description: rich set of graph drawing extra tools
  Graphviz is a set of graph drawing tools. See the description of the graphviz
  package for a full description.
  .
- This package contains the guile (3.0) bindings.
-
-Package: libgv-lua
-Architecture: any
-Multi-Arch: same
-Section: interpreters
-Depends: ${shlibs:Depends}, ${misc:Depends}
-Description: Lua bindings for graphviz
- Graphviz is a set of graph drawing tools. See the description of the graphviz
- package for a full description.
- .
- This package contains the lua5.2 bindings.
-
-Package: libgv-perl
-Architecture: any
-Multi-Arch: same
-Section: perl
-Depends: ${perl:Depends}, ${shlibs:Depends}, ${misc:Depends}
-Description: Perl bindings for graphviz
- Graphviz is a set of graph drawing tools. See the description of the graphviz
- package for a full description.
- .
- This package contains the Perl bindings.
-
-Package: python3-gv
-Architecture: any
-Section: python
-Depends: ${shlibs:Depends}, ${python3:Depends}, ${misc:Depends}
-Breaks: libgv-python (<< 2.40.1-0~)
-Replaces: libgv-python (<< 2.40.1-0~)
-Description: Python3 bindings for graphviz
- Graphviz is a set of graph drawing tools. See the description of the graphviz
- package for a full description.
- .
- This package contains the Python3 bindings.
-
-Package: libgv-ruby
-Architecture: any
-Multi-Arch: same
-Section: ruby
-Depends: ${shlibs:Depends}, ${misc:Depends}
-Description: Ruby bindings for graphviz
- Graphviz is a set of graph drawing tools. See the description of the graphviz
- package for a full description.
- .
- This package contains the Ruby bindings.
-
-
-Package: libgv-tcl
-Architecture: any
-Multi-Arch: same
-Section: interpreters
-Depends: ${shlibs:Depends}, ${misc:Depends}
-Description: Tcl bindings for graphviz
- Graphviz is a set of graph drawing tools. See the description of the graphviz
- package for a full description.
- .
- This package contains the Tcl (8.6) bindings.
-
-Package: libcgraph6
-Architecture: any
-Multi-Arch: same
-Section: libs
-Depends: ${shlibs:Depends}, ${misc:Depends}
-Description: rich set of graph drawing tools - cgraph library
- Graphviz is a set of graph drawing tools. See the description of the graphviz
- package for a full description.
- .
- This package contains the cgraph library.
-
-Package: libcdt5
-Architecture: any
-Multi-Arch: same
-Section: libs
-Depends: ${shlibs:Depends}, ${misc:Depends}
-Description: rich set of graph drawing tools - cdt library
- Graphviz is a set of graph drawing tools. See the description of the graphviz
- package for a full description.
- .
- This package contains the cdt library.
-
-Package: libpathplan4
-Architecture: any
-Multi-Arch: same
-Section: libs
-Depends: ${shlibs:Depends}, ${misc:Depends}
-Description: rich set of graph drawing tools - pathplan library
- Graphviz is a set of graph drawing tools. See the description of the graphviz
- package for a full description.
- .
- This package contains the pathplan library.
-
-Package: libgvc6
-Architecture: any
-Section: libs
-Depends: ${shlibs:Depends}, ${misc:Depends}
-Breaks: libgv-php5
-Replaces: libgv-php5
-Description: rich set of graph drawing tools - gvc library
- Graphviz is a set of graph drawing tools. See the description of the graphviz
- package for a full description.
- .
- This package contains the gvc library.
-
-Package: libgvc6-plugins-gtk
-Architecture: any
-Section: libs
-Depends: ${shlibs:Depends}, ${misc:Depends}
-Description: rich set of graph drawing tools - gtk plugins
- Graphviz is a set of graph drawing tools. See the description of the graphviz
- package for a full description.
- .
- This package contains the gtk and gdk-pixbuf plugins.
-
-Package: libgvpr2
-Architecture: any
-Multi-Arch: same
-Section: libs
-Depends: ${shlibs:Depends}, ${misc:Depends}
-Replaces: libgvpr1
-Description: rich set of graph drawing tools - gvpr library
- Graphviz is a set of graph drawing tools. See the description of the graphviz
- package for a full description.
- .
- This package contains the gvpr library.
-
-Package: libxdot4
-Architecture: any
-Multi-Arch: same
-Section: libs
-Depends: ${shlibs:Depends}, ${misc:Depends}
-Description: rich set of graph drawing tools - xdot library
- Graphviz is a set of graph drawing tools. See the description of the graphviz
- package for a full description.
- .
- This package contains the xdot library.
-
-Package: liblab-gamut1
-Architecture: any
-Multi-Arch: same
-Section: libs
-Depends: ${shlibs:Depends}, ${misc:Depends}
-Description: rich set of graph drawing tools - liblab_gamut library
- Graphviz is a set of graph drawing tools. See the description of the graphviz
- package for a full description.
- .
- This package contains the liblab_gamut library.
+ This package contains the extra command-line tools.
 
 Package: libgraphviz-dev
 Architecture: any
 Multi-Arch: same
 Section: libdevel
-Depends: libcdt5 (= ${binary:Version}),
- libcgraph6 (= ${binary:Version}),
- libgvc6 (= ${binary:Version}),
- libgvpr2 (= ${binary:Version}),
- libpathplan4 (= ${binary:Version}),
- libxdot4 (= ${binary:Version}),
- liblab-gamut1 (= ${binary:Version}),
- libgvc6-plugins-gtk (= ${binary:Version}),
- ${devlibs:Depends}, ${misc:Depends}
+Depends: libgvc-dev (= ${binary:Version}), libcgraph-dev (= ${binary:Version}), libcdt-dev (= ${binary:Version}), libpathplan-dev (= ${binary:Version}), ${misc:Depends}
+Breaks: graphviz (<< 8.1.0-1~)
 Replaces: libgraphviz3-dev, libgraphviz4-dev (<< 2.16-3)
 Provides: graphviz-dev
 Description: graphviz libs and headers against which to build applications
@@ -265,3 +118,640 @@ Description: additional documentation for graphviz
  .
  This package installs HTML and PDF documentation for Graphviz, as well as
  examples.
+
+#Package: smyrna
+#Architecture: any
+#Multi-Arch: foreign
+#Depends: ${shlibs:Depends}, ${misc:Depends}
+#Recommends: fonts-liberation
+#Suggests: graphviz, gsfonts, graphviz-doc
+#Description: viewer for graphs in the DOT format
+# It is especially designed to handle large graphs, and allows flat and
+# topological fisheye views. It is assumed the input graph has position
+# information associated with all nodes. Using the Graphviz convention,
+# a node's position is given by its \fIpos\fP attribute consisting of 2 or 3
+# floating point numbers separated by commas.
+# Nodes are drawn as points and edges as line segments.
+#
+Package: libgv-guile
+Architecture: any
+Multi-Arch: same
+Section: interpreters
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: Guile bindings for graphviz
+ Graphviz is a set of graph drawing tools. See the description of the graphviz
+ package for a full description.
+ .
+ This package contains the guile (3.0) bindings.
+
+Package: libgv-lua
+Architecture: any
+Multi-Arch: same
+Section: interpreters
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: Lua bindings for graphviz
+ Graphviz is a set of graph drawing tools. See the description of the graphviz
+ package for a full description.
+ .
+ This package contains the lua bindings.
+
+Package: libgv-perl
+Architecture: any
+Multi-Arch: same
+Section: perl
+Depends: ${perl:Depends}, ${shlibs:Depends}, ${misc:Depends}
+Description: Perl bindings for graphviz
+ Graphviz is a set of graph drawing tools. See the description of the graphviz
+ package for a full description.
+ .
+ This package contains the Perl bindings.
+
+Package: python3-gv
+Architecture: any
+Section: python
+Depends: ${python3:Depends}, ${shlibs:Depends}, ${misc:Depends}
+Breaks: libgv-python (<< 2.40.1-0~)
+Replaces: libgv-python (<< 2.40.1-0~)
+Description: Python3 bindings for graphviz
+ Graphviz is a set of graph drawing tools. See the description of the graphviz
+ package for a full description.
+ .
+ This package contains the Python3 bindings.
+
+Package: libgv-ruby
+Architecture: any
+Multi-Arch: same
+Section: ruby
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: Ruby bindings for graphviz
+ Graphviz is a set of graph drawing tools. See the description of the graphviz
+ package for a full description.
+ .
+ This package contains the Ruby bindings.
+
+Package: libgv-tcl
+Depends: tcl-gv, ${misc:Depends}
+Architecture: all
+Priority: optional
+Section: oldlibs
+Description: Tcl bindings for graphviz (transitional package)
+ This is a transitional package. It can safely be removed.
+
+Package: tcl-gv
+Architecture: any
+Multi-Arch: same
+Section: interpreters
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Breaks: libgv-tcl (<< 8.1.0-1~)
+Replaces: libgv-tcl (<< 8.1.0-1~)
+Description: Tcl bindings for graphviz
+ Graphviz is a set of graph drawing tools. See the description of the graphviz
+ package for a full description.
+ .
+ This package contains the Tcl (8.6) bindings.
+
+Package: libcgraph-dev
+Architecture: any
+Multi-Arch: same
+Section: libdevel
+Depends: libcgraph8 (= ${binary:Version}), libcdt-dev (= ${binary:Version}), ${misc:Depends}
+Breaks: libgraphviz-dev (<< 8.1.0-1~)
+Replaces: libgraphviz-dev (<< 8.1.0-1~)
+Description: rich set of graph drawing tools - cgraph library (devel)
+ Graphviz is a set of graph drawing tools. See the description of the graphviz
+ package for a full description.
+ .
+ This package installs the libraries and headers necessary to link graphviz
+ library routines into an application. It also installs additional man pages.
+ .
+ Note: A graphviz user doesn't need to install this package.
+
+Package: libcgraph8
+Architecture: any
+Multi-Arch: same
+Section: libs
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: rich set of graph drawing tools - cgraph library
+ Graphviz is a set of graph drawing tools. See the description of the graphviz
+ package for a full description.
+ .
+ This package contains the cgraph library.
+
+Package: libcdt-dev
+Architecture: any
+Multi-Arch: same
+Section: libdevel
+Depends: libcdt6 (= ${binary:Version}), ${misc:Depends}
+Breaks: libgraphviz-dev (<< 8.1.0-1~)
+Replaces: libgraphviz-dev (<< 8.1.0-1~)
+Description: rich set of graph drawing tools - cdt library (devel)
+ Graphviz is a set of graph drawing tools. See the description of the graphviz
+ package for a full description.
+ .
+ This package installs the libraries and headers necessary to link graphviz
+ library routines into an application. It also installs additional man pages.
+ .
+ Note: A graphviz user doesn't need to install this package.
+
+Package: libcdt6
+Architecture: any
+Multi-Arch: same
+Section: libs
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: rich set of graph drawing tools - cdt library
+ Graphviz is a set of graph drawing tools. See the description of the graphviz
+ package for a full description.
+ .
+ This package contains the cdt library.
+
+Package: libpathplan-dev
+Architecture: any
+Multi-Arch: same
+Section: libdevel
+Depends: libpathplan4 (= ${binary:Version}), ${misc:Depends}
+Breaks: libgraphviz-dev (<< 8.1.0-1~)
+Replaces: libgraphviz-dev (<< 8.1.0-1~)
+Description: rich set of graph drawing tools - pathplan library (devel)
+ Graphviz is a set of graph drawing tools. See the description of the graphviz
+ package for a full description.
+ .
+ This package installs the libraries and headers necessary to link graphviz
+ library routines into an application. It also installs additional man pages.
+ .
+ Note: A graphviz user doesn't need to install this package.
+
+Package: libpathplan4
+Architecture: any
+Multi-Arch: same
+Section: libs
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: rich set of graph drawing tools - pathplan library
+ Graphviz is a set of graph drawing tools. See the description of the graphviz
+ package for a full description.
+ .
+ This package contains the pathplan library.
+
+Package: libgvc-dev
+Architecture: any
+Multi-Arch: same
+Section: libdevel
+Depends: libgvc7 (= ${binary:Version}), ${misc:Depends}
+Breaks: libgraphviz-dev (<< 8.1.0-1~)
+Replaces: libgraphviz-dev (<< 8.1.0-1~)
+Description: rich set of graph drawing tools - gvc library (devel)
+ Graphviz is a set of graph drawing tools. See the description of the graphviz
+ package for a full description.
+ .
+ This package installs the libraries and headers necessary to link graphviz
+ library routines into an application. It also installs additional man pages.
+ .
+ Note: A graphviz user doesn't need to install this package.
+
+Package: libgvc7
+Architecture: any
+Multi-Arch: same
+Section: libs
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: rich set of graph drawing tools - gvc library
+ Graphviz is a set of graph drawing tools. See the description of the graphviz
+ package for a full description.
+ .
+ This package contains the gvc library.
+
+#Package: libgvc6-plugins-gtk
+#Architecture: any
+#Multi-Arch: same
+#Section: libs
+#Depends: ${misc:Depends}, libgvplugin-gdk (= ${binary:Version}), libgvplugin-gtk (= ${binary:Version}), libgvplugin-rsvg (= ${binary:Version})
+#Description: rich set of graph drawing tools - GTK plugins
+# Graphviz is a set of graph drawing tools. See the description of the graphviz
+# package for a full description.
+# .
+# This is an empty dependency package that pulls in the GDK and GTK plugins.
+#
+Package: libgvpr-dev
+Architecture: any
+Multi-Arch: same
+Section: libdevel
+Depends: libgvpr2 (= ${binary:Version}), ${misc:Depends}
+Breaks: libgraphviz-dev (<< 8.1.0-1~)
+Replaces: libgraphviz-dev (<< 8.1.0-1~)
+Description: rich set of graph drawing tools - gvpr library (devel)
+ Graphviz is a set of graph drawing tools. See the description of the graphviz
+ package for a full description.
+ .
+ This package installs the libraries and headers necessary to link graphviz
+ library routines into an application. It also installs additional man pages.
+ .
+ Note: A graphviz user doesn't need to install this package.
+
+Package: libgvpr2
+Architecture: any
+Multi-Arch: same
+Section: libs
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Replaces: libgvpr1
+Description: rich set of graph drawing tools - gvpr library
+ Graphviz is a set of graph drawing tools. See the description of the graphviz
+ package for a full description.
+ .
+ This package contains the gvpr library.
+
+Package: libxdot-dev
+Architecture: any
+Multi-Arch: same
+Section: libdevel
+Depends: libxdot4 (= ${binary:Version}), ${misc:Depends}
+Breaks: libgraphviz-dev (<< 8.1.0-1~)
+Replaces: libgraphviz-dev (<< 8.1.0-1~)
+Description: rich set of graph drawing tools - xdot library (devel)
+ Graphviz is a set of graph drawing tools. See the description of the graphviz
+ package for a full description.
+ .
+ This package installs the libraries and headers necessary to link graphviz
+ library routines into an application. It also installs additional man pages.
+ .
+ Note: A graphviz user doesn't need to install this package.
+
+Package: libxdot4
+Architecture: any
+Multi-Arch: same
+Section: libs
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: rich set of graph drawing tools - xdot library
+ Graphviz is a set of graph drawing tools. See the description of the graphviz
+ package for a full description.
+ .
+ This package contains the xdot library.
+
+Package: libgvplugin-devil-dev
+Architecture: any
+Multi-Arch: same
+Section: libdevel
+Depends: libgvplugin-devil8 (= ${binary:Version}), ${misc:Depends}
+Description: rich set of graph drawing tools - devil plugin (devel)
+ Graphviz is a set of graph drawing tools. See the description of the graphviz
+ package for a full description.
+ .
+ This package installs the libraries and headers necessary to link graphviz
+ library routines into an application. It also installs additional man pages.
+ .
+ Note: A graphviz user doesn't need to install this package.
+
+Package: libgvplugin-devil8
+Architecture: any
+Multi-Arch: same
+Section: libs
+Depends: graphviz (= ${binary:Version}), ${shlibs:Depends}, ${misc:Depends}
+Provides: libgvplugin-devil
+Description: rich set of graph drawing tools - devil plugin
+ Graphviz is a set of graph drawing tools. See the description of the graphviz
+ package for a full description.
+ .
+ This package contains the devil plugin.
+
+Package: libgvplugin-gd-dev
+Architecture: any
+Multi-Arch: same
+Section: libdevel
+Depends: libgvplugin-gd8 (= ${binary:Version}), ${misc:Depends}
+Breaks: libgraphviz-dev (<< 8.1.0-1~)
+Replaces: libgraphviz-dev (<< 8.1.0-1~)
+Description: rich set of graph drawing tools - gd plugin (devel)
+ Graphviz is a set of graph drawing tools. See the description of the graphviz
+ package for a full description.
+ .
+ This package installs the libraries and headers necessary to link graphviz
+ library routines into an application. It also installs additional man pages.
+ .
+ Note: A graphviz user doesn't need to install this package.
+
+Package: libgvplugin-gd8
+Architecture: any
+Multi-Arch: same
+Section: libs
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Breaks: libgvc6 (<< 8.1.0-1~)
+Replaces: libgvc6 (<< 8.1.0-1~)
+Provides: libgvplugin-gd
+Description: rich set of graph drawing tools - gd plugin
+ Graphviz is a set of graph drawing tools. See the description of the graphviz
+ package for a full description.
+ .
+ This package contains the gd plugin, adding the following dot output
+ formats: gd gd2 gif jpe jpeg jpg png vrml wbmp
+
+#Package: libgvplugin-gdk-dev
+#Architecture: any
+#Multi-Arch: same
+#Section: libdevel
+#Depends: libgvplugin-gdk (= ${binary:Version}), ${misc:Depends}
+#Breaks: libgraphviz-dev (<< 8.1.0-1~)
+#Replaces: libgraphviz-dev (<< 8.1.0-1~)
+#Description: rich set of graph drawing tools - GDK plugin (devel)
+# Graphviz is a set of graph drawing tools. See the description of the graphviz
+# package for a full description.
+# .
+# This package installs the libraries and headers necessary to link graphviz
+# library routines into an application. It also installs additional man pages.
+# .
+# Note: A graphviz user doesn't need to install this package.
+#
+#Package: libgvplugin-gdk
+#Architecture: any
+#Multi-Arch: same
+#Section: libs
+#Depends: graphviz (= ${binary:Version}), ${shlibs:Depends}, ${misc:Depends}
+#Breaks: libgvc6-plugins-gtk (<< 8.1.0-1~)
+#Replaces: libgvc6-plugins-gtk (<< 8.1.0-1~)
+#Description: rich set of graph drawing tools - GDK plugin
+# Graphviz is a set of graph drawing tools. See the description of the graphviz
+# package for a full description.
+# .
+# This package contains the GDK plugin.
+#
+#Package: libgvplugin-gtk-dev
+#Architecture: any
+#Multi-Arch: same
+#Section: libdevel
+#Depends: libgvplugin-gtk (= ${binary:Version}), ${misc:Depends}
+#Breaks: libgraphviz-dev (<< 8.1.0-1~)
+#Replaces: libgraphviz-dev (<< 8.1.0-1~)
+#Description: rich set of graph drawing tools - GTK plugin (devel)
+# Graphviz is a set of graph drawing tools. See the description of the graphviz
+# package for a full description.
+# .
+# This package installs the libraries and headers necessary to link graphviz
+# library routines into an application. It also installs additional man pages.
+# .
+# Note: A graphviz user doesn't need to install this package.
+#
+#Package: libgvplugin-gtk
+#Architecture: any
+#Multi-Arch: same
+#Section: libs
+#Depends: graphviz (= ${binary:Version}), ${shlibs:Depends}, ${misc:Depends}
+#Breaks: libgvc6-plugins-gtk (<< 8.1.0-1~)
+#Replaces: libgvc6-plugins-gtk (<< 8.1.0-1~)
+#Description: rich set of graph drawing tools - GTK plugin
+# Graphviz is a set of graph drawing tools. See the description of the graphviz
+# package for a full description.
+# .
+# This package contains the GTK plugin.
+#
+Package: libgvplugin-gs-dev
+Architecture: any
+Multi-Arch: same
+Section: libdevel
+Depends: libgvplugin-gs8 (= ${binary:Version}), ${misc:Depends}
+Breaks: libgraphviz-dev (<< 8.1.0-1~)
+Replaces: libgraphviz-dev (<< 8.1.0-1~)
+Description: rich set of graph drawing tools - ghostscript plugin (devel)
+ Graphviz is a set of graph drawing tools. See the description of the graphviz
+ package for a full description.
+ .
+ This package installs the libraries and headers necessary to link graphviz
+ library routines into an application. It also installs additional man pages.
+ .
+ Note: A graphviz user doesn't need to install this package.
+
+Package: libgvplugin-gs8
+Architecture: any
+Multi-Arch: same
+Section: libs
+Depends: graphviz (= ${binary:Version}), ${shlibs:Depends}, ${misc:Depends}
+Breaks: libgvc6 (<< 8.1.0-1~)
+Replaces: libgvc6 (<< 8.1.0-1~)
+Provides: libgvplugin-gs
+Description: rich set of graph drawing tools - ghostsript plugin
+ Graphviz is a set of graph drawing tools. See the description of the graphviz
+ package for a full description.
+ .
+ This package contains the ghostscript plugin.
+
+Package: libgvplugin-neato-layout-dev
+Architecture: any
+Multi-Arch: same
+Section: libdevel
+Depends: libgvplugin-neato-layout8 (= ${binary:Version}), ${misc:Depends}
+Breaks: libgraphviz-dev (<< 8.1.0-1~)
+Replaces: libgraphviz-dev (<< 8.1.0-1~)
+Description: rich set of graph drawing tools - neato_layout plugin (devel)
+ Graphviz is a set of graph drawing tools. See the description of the graphviz
+ package for a full description.
+ .
+ This package installs the libraries and headers necessary to link graphviz
+ library routines into an application. It also installs additional man pages.
+ .
+ Note: A graphviz user doesn't need to install this package.
+
+Package: libgvplugin-neato-layout8
+Architecture: any
+Multi-Arch: same
+Section: libs
+Depends: graphviz (= ${binary:Version}), ${shlibs:Depends}, ${misc:Depends}
+Breaks: libgvc6 (<< 8.1.0-1~)
+Replaces: libgvc6 (<< 8.1.0-1~)
+Provides: libgvplugin-neato-layout
+Description: rich set of graph drawing tools - neato_layout plugin
+ Graphviz is a set of graph drawing tools. See the description of the graphviz
+ package for a full description.
+ .
+ This package contains the neato_layout plugin.
+
+Package: libgvplugin-pango-dev
+Architecture: any
+Multi-Arch: same
+Section: libdevel
+Depends: libgvplugin-pango8 (= ${binary:Version}), ${misc:Depends}
+Breaks: libgraphviz-dev (<< 8.1.0-1~)
+Replaces: libgraphviz-dev (<< 8.1.0-1~)
+Description: rich set of graph drawing tools - pango plugin (devel)
+ Graphviz is a set of graph drawing tools. See the description of the graphviz
+ package for a full description.
+ .
+ This package installs the libraries and headers necessary to link graphviz
+ library routines into an application. It also installs additional man pages.
+ .
+ Note: A graphviz user doesn't need to install this package.
+
+Package: libgvplugin-pango8
+Architecture: any
+Multi-Arch: same
+Section: libs
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Breaks: libgvc6 (<< 8.1.0-1~)
+Replaces: libgvc6 (<< 8.1.0-1~)
+Provides: libgvplugin-pango
+Description: rich set of graph drawing tools - pango plugin
+ Graphviz is a set of graph drawing tools. See the description of the graphviz
+ package for a full description.
+ .
+ This package contains the pango plugin, adding the following dot output
+ formats: bmp pdf tga tif tiff
+
+Package: libgvplugin-poppler-dev
+Architecture: any
+Multi-Arch: same
+Section: libdevel
+Depends: libgvplugin-poppler8 (= ${binary:Version}), ${misc:Depends}
+Breaks: libgraphviz-dev (<< 8.1.0-1~)
+Replaces: libgraphviz-dev (<< 8.1.0-1~)
+Description: rich set of graph drawing tools - poppler plugin (devel)
+ Graphviz is a set of graph drawing tools. See the description of the graphviz
+ package for a full description.
+ .
+ This package installs the libraries and headers necessary to link graphviz
+ library routines into an application. It also installs additional man pages.
+ .
+ Note: A graphviz user doesn't need to install this package.
+
+Package: libgvplugin-poppler8
+Architecture: any
+Multi-Arch: same
+Section: libs
+Depends: graphviz (= ${binary:Version}), ${shlibs:Depends}, ${misc:Depends}
+Breaks: libgvc6 (<< 8.1.0-1~)
+Replaces: libgvc6 (<< 8.1.0-1~)
+Provides: libgvplugin-poppler
+Description: rich set of graph drawing tools - poppler plugin
+ Graphviz is a set of graph drawing tools. See the description of the graphviz
+ package for a full description.
+ .
+ This package contains the poppler plugin.
+
+Package: libgvplugin-rsvg-dev
+Architecture: amd64 arm64 armel armhf i386 mips64el ppc64el riscv64 s390x
+Multi-Arch: same
+Section: libdevel
+Depends: libgvplugin-rsvg8 (= ${binary:Version}), ${misc:Depends}
+Breaks: libgraphviz-dev (<< 8.1.0-1~)
+Replaces: libgraphviz-dev (<< 8.1.0-1~)
+Description: rich set of graph drawing tools - rsvg plugin (devel)
+ Graphviz is a set of graph drawing tools. See the description of the graphviz
+ package for a full description.
+ .
+ This package installs the libraries and headers necessary to link graphviz
+ library routines into an application. It also installs additional man pages.
+ .
+ Note: A graphviz user doesn't need to install this package.
+
+Package: libgvplugin-rsvg8
+Architecture: amd64 arm64 armel armhf i386 mips64el ppc64el riscv64 s390x
+Multi-Arch: same
+Section: libs
+Depends: graphviz (= ${binary:Version}), ${shlibs:Depends}, ${misc:Depends}
+Breaks: libgvc6-plugins-gtk (<< 8.1.0-1~)
+Replaces: libgvc6-plugins-gtk (<< 8.1.0-1~)
+Provides: libgvplugin-rsvg
+Description: rich set of graph drawing tools - rsvg plugin
+ Graphviz is a set of graph drawing tools. See the description of the graphviz
+ package for a full description.
+ .
+ This package contains the rsvg plugin.
+
+Package: libgvplugin-vt-dev
+Architecture: any
+Multi-Arch: same
+Section: libdevel
+Depends: libgvplugin-vt8 (= ${binary:Version}), ${misc:Depends}
+Breaks: libgvplugin-vt100-dev (<< 9.0.0-1~)
+Replaces: libgvplugin-vt100-dev (<< 9.0.0-1~)
+Description: rich set of graph drawing tools - vt plugin (devel)
+ Graphviz is a set of graph drawing tools. See the description of the graphviz
+ package for a full description.
+ .
+ This package installs the libraries and headers necessary to link graphviz
+ library routines into an application. It also installs additional man pages.
+ .
+ Note: A graphviz user doesn't need to install this package.
+
+Package: libgvplugin-vt8
+Architecture: any
+Multi-Arch: same
+Section: libs
+Depends: graphviz (= ${binary:Version}), ${shlibs:Depends}, ${misc:Depends}
+Breaks: libgvplugin-vt100 (<< 9.0.0-1~)
+Replaces: libgvplugin-vt100 (<< 9.0.0-1~)
+Provides: libgvplugin-vt
+Description: rich set of graph drawing tools - vt plugin
+ Graphviz is a set of graph drawing tools. See the description of the graphviz
+ package for a full description.
+ .
+ This package contains the vt plugin.
+
+Package: libgvplugin-vt100-dev
+Depends: libgvplugin-vt-dev, ${misc:Depends}
+Architecture: all
+Priority: optional
+Section: oldlibs
+Description: rich set of graph drawing tools - vt100 plugin (devel) (transitional package)
+ This is a transitional package. It can safely be removed.
+
+Package: libgvplugin-vt100
+Depends: libgvplugin-vt, ${misc:Depends}
+Architecture: all
+Priority: optional
+Section: oldlibs
+Description: rich set of graph drawing tools - vt100 plugin (transitional package)
+ This is a transitional package. It can safely be removed.
+
+Package: libgvplugin-webp-dev
+Architecture: any
+Multi-Arch: same
+Section: libdevel
+Depends: libgvplugin-webp8 (= ${binary:Version}), ${misc:Depends}
+Breaks: libgraphviz-dev (<< 8.1.0-1~)
+Replaces: libgraphviz-dev (<< 8.1.0-1~)
+Description: rich set of graph drawing tools - webp plugin (devel)
+ Graphviz is a set of graph drawing tools. See the description of the graphviz
+ package for a full description.
+ .
+ This package installs the libraries and headers necessary to link graphviz
+ library routines into an application. It also installs additional man pages.
+ .
+ Note: A graphviz user doesn't need to install this package.
+
+Package: libgvplugin-webp8
+Architecture: any
+Multi-Arch: same
+Section: libs
+Depends: graphviz (= ${binary:Version}), ${shlibs:Depends}, ${misc:Depends}
+Breaks: libgvc6 (<< 8.1.0-1~)
+Replaces: libgvc6 (<< 8.1.0-1~)
+Provides: libgvplugin-webp
+Description: rich set of graph drawing tools - webp plugin
+ Graphviz is a set of graph drawing tools. See the description of the graphviz
+ package for a full description.
+ .
+ This package contains the webp plugin.
+
+Package: libgvplugin-xlib-dev
+Architecture: any
+Multi-Arch: same
+Section: libdevel
+Depends: libgvplugin-xlib8 (= ${binary:Version}), ${misc:Depends}
+Breaks: libgraphviz-dev (<< 8.1.0-1~)
+Replaces: libgraphviz-dev (<< 8.1.0-1~)
+Description: rich set of graph drawing tools - xlib plugin (devel)
+ Graphviz is a set of graph drawing tools. See the description of the graphviz
+ package for a full description.
+ .
+ This package installs the libraries and headers necessary to link graphviz
+ library routines into an application. It also installs additional man pages.
+ .
+ Note: A graphviz user doesn't need to install this package.
+
+Package: libgvplugin-xlib8
+Architecture: any
+Multi-Arch: same
+Section: libs
+Depends: graphviz (= ${binary:Version}), ${shlibs:Depends}, ${misc:Depends}
+Breaks: libgvc6 (<< 8.1.0-1~)
+Replaces: libgvc6 (<< 8.1.0-1~)
+Provides: libgvplugin-xlib
+Description: rich set of graph drawing tools - xlib plugin
+ Graphviz is a set of graph drawing tools. See the description of the graphviz
+ package for a full description.
+ .
+ This package contains the xlib plugin.

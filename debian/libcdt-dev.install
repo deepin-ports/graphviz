@@ -1,0 +1,4 @@
+usr/include/graphviz/cdt.h
+usr/lib/${DEB_HOST_MULTIARCH}/libcdt*.a
+usr/lib/${DEB_HOST_MULTIARCH}/libcdt*.so
+usr/lib/${DEB_HOST_MULTIARCH}/pkgconfig/libcdt.pc

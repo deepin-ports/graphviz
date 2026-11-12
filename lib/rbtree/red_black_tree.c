@@ -1,14 +1,13 @@
-/* $Id$Revision:  */
-/* vim:set shiftwidth=4 ts=8: */
-
 /**********************************************************
 *      See the LICENSE file for copyright information.     *
 **********************************************************/
 
 #include "config.h"
 
-#include "red_black_tree.h"
-#include "stdio.h"
+#include <assert.h>
+#include <rbtree/red_black_tree.h>
+#include <stdio.h>
+#include <stdlib.h>
 
 /***********************************************************************/
 /*  FUNCTION:  RBTreeCreate */
@@ -17,12 +16,7 @@
 /*  void pointers to keys and returns 1 if the first argument is */
 /*  "greater than" the second.   DestFunc takes a pointer to a key and */
 /*  destroys it in the appropriate manner when the node containing that */
-/*  key is deleted.  InfoDestFunc is similar to DestFunc except it */
-/*  receives a pointer to the info of a node and destroys it. */
-/*  PrintFunc receives a pointer to the key of a node and prints it. */
-/*  PrintInfo receives a pointer to the info of a node and prints it. */
-/*  If RBTreePrint is never called the print functions don't have to be */
-/*  defined and NullFunction can be used.  */
+/*  key is deleted. */
 /**/
 /*  OUTPUT:  This function returns a pointer to the newly created */
 /*  red-black tree. */
@@ -31,39 +25,38 @@
 /***********************************************************************/
 
 rb_red_blk_tree* RBTreeCreate( int (*CompFunc) (const void*,const void*),
-			      void (*DestFunc) (void*),
-			      void (*InfoDestFunc) (void*),
-			      void (*PrintFunc) (const void*),
-			      void (*PrintInfo)(void*)) {
+                              void (*DestFunc)(void *)) {
   rb_red_blk_tree* newTree = NULL;
   rb_red_blk_node* temp;
 
-  if (setjmp(rb_jbuf)) {
-    if (newTree) {
-      if (newTree->nil) free (newTree->nil);
-      free (newTree);
-    }
+  newTree= malloc(sizeof(rb_red_blk_tree));
+  if (newTree == NULL) {
     return NULL;
   }
-  newTree=(rb_red_blk_tree*) SafeMalloc(sizeof(rb_red_blk_tree));
   newTree->nil = newTree->root = NULL;
   newTree->Compare=  CompFunc;
   newTree->DestroyKey= DestFunc;
-  newTree->PrintKey= PrintFunc;
-  newTree->PrintInfo= PrintInfo;
-  newTree->DestroyInfo= InfoDestFunc;
 
   /*  see the comment in the rb_red_blk_tree structure in red_black_tree.h */
   /*  for information on nil and root */
-  temp=newTree->nil= (rb_red_blk_node*) SafeMalloc(sizeof(rb_red_blk_node));
+  temp=newTree->nil= malloc(sizeof(rb_red_blk_node));
+  if (temp == NULL) {
+    free(newTree);
+    return NULL;
+  }
   temp->parent=temp->left=temp->right=temp;
   temp->red=0;
   temp->key=0;
-  temp=newTree->root= (rb_red_blk_node*) SafeMalloc(sizeof(rb_red_blk_node));
+  temp=newTree->root= malloc(sizeof(rb_red_blk_node));
+  if (temp == NULL) {
+    free(newTree->nil);
+    free(newTree);
+    return NULL;
+  }
   temp->parent=temp->left=temp->right=newTree->nil;
   temp->key=0;
   temp->red=0;
-  return(newTree);
+  return newTree;
 }
 
 /***********************************************************************/
@@ -83,7 +76,7 @@ rb_red_blk_tree* RBTreeCreate( int (*CompFunc) (const void*,const void*),
 /*            accordingly. */
 /***********************************************************************/
 
-void LeftRotate(rb_red_blk_tree* tree, rb_red_blk_node* x) {
+static void LeftRotate(rb_red_blk_tree* tree, rb_red_blk_node* x) {
   rb_red_blk_node* y;
   rb_red_blk_node* nil=tree->nil;
 
@@ -115,9 +108,7 @@ void LeftRotate(rb_red_blk_tree* tree, rb_red_blk_node* x) {
   y->left=x;
   x->parent=y;
 
-#ifdef DEBUG_ASSERT
-  Assert(!tree->nil->red,"nil not red in LeftRotate");
-#endif
+  assert(!tree->nil->red && "nil not red in LeftRotate");
 }
 
 
@@ -138,7 +129,7 @@ void LeftRotate(rb_red_blk_tree* tree, rb_red_blk_node* x) {
 /*            accordingly. */
 /***********************************************************************/
 
-void RightRotate(rb_red_blk_tree* tree, rb_red_blk_node* y) {
+static void RightRotate(rb_red_blk_tree* tree, rb_red_blk_node* y) {
   rb_red_blk_node* x;
   rb_red_blk_node* nil=tree->nil;
 
@@ -169,9 +160,7 @@ void RightRotate(rb_red_blk_tree* tree, rb_red_blk_node* y) {
   x->right=y;
   y->parent=x;
 
-#ifdef DEBUG_ASSERT
-  Assert(!tree->nil->red,"nil not red in RightRotate");
-#endif
+  assert(!tree->nil->red && "nil not red in RightRotate");
 }
 
 /***********************************************************************/
@@ -189,7 +178,7 @@ void RightRotate(rb_red_blk_tree* tree, rb_red_blk_node* y) {
 /*            by the RBTreeInsert function and not by the user */
 /***********************************************************************/
 
-void TreeInsertHelp(rb_red_blk_tree* tree, rb_red_blk_node* z) {
+static void TreeInsertHelp(rb_red_blk_tree* tree, rb_red_blk_node* z) {
   /*  This function should only be called by InsertRBTree (see above) */
   rb_red_blk_node* x;
   rb_red_blk_node* y;
@@ -214,9 +203,7 @@ void TreeInsertHelp(rb_red_blk_tree* tree, rb_red_blk_node* z) {
     y->right=z;
   }
 
-#ifdef DEBUG_ASSERT
-  Assert(!tree->nil->red,"nil not red in TreeInsertHelp");
-#endif
+  assert(!tree->nil->red && "nil not red in TreeInsertHelp");
 }
 
 /*  Before calling Insert RBTree the node x should have its key set */
@@ -225,7 +212,7 @@ void TreeInsertHelp(rb_red_blk_tree* tree, rb_red_blk_node* z) {
 /*  FUNCTION:  RBTreeInsert */
 /**/
 /*  INPUTS:  tree is the red-black tree to insert a node which has a key */
-/*           pointed to by key and info pointed to by info.  */
+/*           pointed to by key.  */
 /**/
 /*  OUTPUT:  This function returns a pointer to the newly inserted node */
 /*           which is guarunteed to be valid until this node is deleted. */
@@ -235,20 +222,20 @@ void TreeInsertHelp(rb_red_blk_tree* tree, rb_red_blk_node* z) {
 /**/
 /*  Modifies Input: tree */
 /**/
-/*  EFFECTS:  Creates a node node which contains the appropriate key and */
-/*            info pointers and inserts it into the tree. */
+/*  EFFECTS:  Creates a node node which contains the appropriate key */
+/*            pointer and inserts it into the tree. */
 /***********************************************************************/
 
-rb_red_blk_node * RBTreeInsert(rb_red_blk_tree* tree, void* key, void* info) {
+rb_red_blk_node * RBTreeInsert(rb_red_blk_tree* tree, void* key) {
   rb_red_blk_node * y;
   rb_red_blk_node * x;
   rb_red_blk_node * newNode;
 
-  if (setjmp(rb_jbuf))
+  x= malloc(sizeof(rb_red_blk_node));
+  if (x == NULL) {
     return NULL;
-  x=(rb_red_blk_node*) SafeMalloc(sizeof(rb_red_blk_node));
+  }
   x->key=key;
-  x->info=info;
 
   TreeInsertHelp(tree,x);
   newNode=x;
@@ -289,12 +276,7 @@ rb_red_blk_node * RBTreeInsert(rb_red_blk_tree* tree, void* key, void* info) {
     }
   }
   tree->root->left->red=0;
-  return(newNode);
-
-#ifdef DEBUG_ASSERT
-  Assert(!tree->nil->red,"nil not red in RBTreeInsert");
-  Assert(!tree->root->red,"root not red in RBTreeInsert");
-#endif
+  return newNode;
 }
 
 /***********************************************************************/
@@ -320,15 +302,15 @@ rb_red_blk_node* TreeSuccessor(rb_red_blk_tree* tree,rb_red_blk_node* x) {
     while(y->left != nil) { /* returns the minium of the right subtree of x */
       y=y->left;
     }
-    return(y);
+    return y;
   } else {
     y=x->parent;
     while(x == y->right) { /* sentinel used instead of checking for nil */
       x=y;
       y=y->parent;
     }
-    if (y == root) return(nil);
-    return(y);
+    if (y == root) return nil;
+    return y;
   }
 }
 
@@ -355,53 +337,17 @@ rb_red_blk_node* TreePredecessor(rb_red_blk_tree* tree, rb_red_blk_node* x) {
     while(y->right != nil) { /* returns the maximum of the left subtree of x */
       y=y->right;
     }
-    return(y);
+    return y;
   } else {
     y=x->parent;
     while(x == y->left) { 
-      if (y == root) return(nil); 
+      if (y == root) return nil;
       x=y;
       y=y->parent;
     }
-    return(y);
+    return y;
   }
 }
-
-/***********************************************************************/
-/*  FUNCTION:  InorderTreePrint */
-/**/
-/*    INPUTS:  tree is the tree to print and x is the current inorder node */
-/**/
-/*    OUTPUT:  none  */
-/**/
-/*    EFFECTS:  This function recursively prints the nodes of the tree */
-/*              inorder using the PrintKey and PrintInfo functions. */
-/**/
-/*    Modifies Input: none */
-/**/
-/*    Note:    This function should only be called from RBTreePrint */
-/***********************************************************************/
-
-void InorderTreePrint(rb_red_blk_tree* tree, rb_red_blk_node* x) {
-  rb_red_blk_node* nil=tree->nil;
-  rb_red_blk_node* root=tree->root;
-  if (x != tree->nil) {
-    InorderTreePrint(tree,x->left);
-    printf("info=");
-    tree->PrintInfo(x->info);
-    printf("  key="); 
-    tree->PrintKey(x->key);
-    printf("  l->key=");
-    if( x->left == nil) printf("NULL"); else tree->PrintKey(x->left->key);
-    printf("  r->key=");
-    if( x->right == nil) printf("NULL"); else tree->PrintKey(x->right->key);
-    printf("  p->key=");
-    if( x->parent == root) printf("NULL"); else tree->PrintKey(x->parent->key);
-    printf("  red=%i\n",x->red);
-    InorderTreePrint(tree,x->right);
-  }
-}
-
 
 /***********************************************************************/
 /*  FUNCTION:  TreeDestHelper */
@@ -418,13 +364,12 @@ void InorderTreePrint(rb_red_blk_tree* tree, rb_red_blk_node* x) {
 /*    Note:    This function should only be called by RBTreeDestroy */
 /***********************************************************************/
 
-void TreeDestHelper(rb_red_blk_tree* tree, rb_red_blk_node* x) {
+static void TreeDestHelper(rb_red_blk_tree* tree, rb_red_blk_node* x) {
   rb_red_blk_node* nil=tree->nil;
   if (x != nil) {
     TreeDestHelper(tree,x->left);
     TreeDestHelper(tree,x->right);
     tree->DestroyKey(x->key);
-    tree->DestroyInfo(x->info);
     free(x);
   }
 }
@@ -450,26 +395,6 @@ void RBTreeDestroy(rb_red_blk_tree* tree) {
   free(tree);
 }
 
-
-/***********************************************************************/
-/*  FUNCTION:  RBTreePrint */
-/**/
-/*    INPUTS:  tree is the tree to print */
-/**/
-/*    OUTPUT:  none */
-/**/
-/*    EFFECT:  This function recursively prints the nodes of the tree */
-/*             inorder using the PrintKey and PrintInfo functions. */
-/**/
-/*    Modifies Input: none */
-/**/
-/***********************************************************************/
-
-void RBTreePrint(rb_red_blk_tree* tree) {
-  InorderTreePrint(tree,tree->root->left);
-}
-
-
 /***********************************************************************/
 /*  FUNCTION:  RBExactQuery */
 /**/
@@ -488,18 +413,18 @@ rb_red_blk_node* RBExactQuery(rb_red_blk_tree* tree, void* q) {
   rb_red_blk_node* x=tree->root->left;
   rb_red_blk_node* nil=tree->nil;
   int compVal;
-  if (x == nil) return(0);
-  compVal=tree->Compare(x->key,(int*) q);
+  if (x == nil) return 0;
+  compVal = tree->Compare(x->key, q);
   while(0 != compVal) {/*assignemnt*/
     if (1 == compVal) { /* x->key > q */
       x=x->left;
     } else {
       x=x->right;
     }
-    if ( x == nil) return(0);
-    compVal=tree->Compare(x->key,(int*) q);
+    if ( x == nil) return 0;
+    compVal = tree->Compare(x->key, q);
   }
-  return(x);
+  return x;
 }
 
 
@@ -519,7 +444,7 @@ rb_red_blk_node* RBExactQuery(rb_red_blk_tree* tree, void* q) {
 /*    The algorithm from this function is from _Introduction_To_Algorithms_ */
 /***********************************************************************/
 
-void RBDeleteFixUp(rb_red_blk_tree* tree, rb_red_blk_node* x) {
+static void RBDeleteFixUp(rb_red_blk_tree* tree, rb_red_blk_node* x) {
   rb_red_blk_node* root=tree->root->left;
   rb_red_blk_node* w;
 
@@ -548,7 +473,7 @@ void RBDeleteFixUp(rb_red_blk_tree* tree, rb_red_blk_node* x) {
 	LeftRotate(tree,x->parent);
 	x=root; /* this is to exit while loop */
       }
-    } else { /* the code below is has left and right switched from above */
+    } else { // the code below has left and right switched from above
       w=x->parent->left;
       if (w->red) {
 	w->red=0;
@@ -576,9 +501,7 @@ void RBDeleteFixUp(rb_red_blk_tree* tree, rb_red_blk_node* x) {
   }
   x->red=0;
 
-#ifdef DEBUG_ASSERT
-  Assert(!tree->nil->red,"nil not black in RBDeleteFixUp");
-#endif
+  assert(!tree->nil->red && "nil not black in RBDeleteFixUp");
 }
 
 
@@ -589,8 +512,8 @@ void RBDeleteFixUp(rb_red_blk_tree* tree, rb_red_blk_node* x) {
 /**/
 /*    OUTPUT:  none */
 /**/
-/*    EFFECT:  Deletes z from tree and frees the key and info of z */
-/*             using DestoryKey and DestoryInfo.  Then calls */
+/*    EFFECT:  Deletes z from tree and frees the key of z */
+/*             using DestroyKey.  Then calls */
 /*             RBDeleteFixUp to restore red-black properties */
 /**/
 /*    Modifies Input: tree, z */
@@ -617,15 +540,12 @@ void RBDelete(rb_red_blk_tree* tree, rb_red_blk_node* z){
   }
   if (y != z) { /* y should not be nil in this case */
 
-#ifdef DEBUG_ASSERT
-    Assert( (y!=tree->nil),"y is nil in RBDelete\n");
-#endif
+    assert(y!=tree->nil && "y is nil in RBDelete");
     /* y is the node to splice out and x is its child */
 
     if (!(y->red)) RBDeleteFixUp(tree,x);
   
     tree->DestroyKey(z->key);
-    tree->DestroyInfo(z->info);
     y->left=z->left;
     y->right=z->right;
     y->parent=z->parent;
@@ -639,56 +559,9 @@ void RBDelete(rb_red_blk_tree* tree, rb_red_blk_node* z){
     free(z); 
   } else {
     tree->DestroyKey(y->key);
-    tree->DestroyInfo(y->info);
     if (!(y->red)) RBDeleteFixUp(tree,x);
     free(y);
   }
   
-#ifdef DEBUG_ASSERT
-  Assert(!tree->nil->red,"nil not black in RBDelete");
-#endif
+  assert(!tree->nil->red && "nil not black in RBDelete");
 }
-
-
-/***********************************************************************/
-/*  FUNCTION:  RBEnumerate */
-/**/
-/*    INPUTS:  tree is the tree to look for keys >= low */
-/*             and <= high with respect to the Compare function */
-/**/
-/*    OUTPUT:  stack containing pointers to the nodes between [low,high] */
-/**/
-/*    Modifies Input: none */
-/***********************************************************************/
-
-stk_stack* RBEnumerate(rb_red_blk_tree* tree, void* low, void* high) {
-  stk_stack* enumResultStack;
-  rb_red_blk_node* nil=tree->nil;
-  rb_red_blk_node* x=tree->root->left;
-  rb_red_blk_node* lastBest=nil;
-
-  if (setjmp(rb_jbuf)) {
-    return NULL;
-  }
-  enumResultStack=StackCreate();
-  while(nil != x) {
-    if ( 1 == (tree->Compare(x->key,high)) ) { /* x->key > high */
-      x=x->left;
-    } else {
-      lastBest=x;
-      x=x->right;
-    }
-  }
-  while ( (lastBest != nil) && (1 != tree->Compare(low,lastBest->key))) {
-    StackPush(enumResultStack,lastBest);
-    lastBest=TreePredecessor(tree,lastBest);
-  }
-  return(enumResultStack);
-}
-      
-    
-  
-  
-
-
-

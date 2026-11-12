@@ -1,2 +1,6 @@
+INSTALL
+aclocal.m4
+config.h.in
+config/compile
 graphviz_version.h
 tclpkg/gv/php_gv.h

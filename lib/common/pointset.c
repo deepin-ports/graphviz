@@ -1,41 +1,51 @@
-/* $Id$ $Revision$ */
-/* vim:set shiftwidth=4 ts=8: */
-
+/// @file
+/// @ingroup common_utils
 /*************************************************************************
  * Copyright (c) 2011 AT&T Intellectual Property 
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
- * http://www.eclipse.org/legal/epl-v10.html
+ * https://www.eclipse.org/legal/epl-v10.html
  *
- * Contributors: See CVS logs. Details at http://www.graphviz.org/
+ * Contributors: Details at https://graphviz.org
  *************************************************************************/
 
+#include "config.h"
 
-#include "render.h"
-#include "pointset.h"
+#include <common/render.h>
+#include <common/pointset.h>
+#include <stddef.h>
+#include <util/alloc.h>
 
 typedef struct {
     Dtlink_t link;
-    point id;
+    pointf id;
 } pair;
 
-static pair *mkPair(point p)
-{
-    pair *pp;
-
-    pp = NEW(pair);
+static pair *mkPair(pointf p) {
+    pair *pp = gv_alloc(sizeof(pair));
     pp->id = p;
     return pp;
 }
 
-static void freePair(Dt_t * d, pair* pp, Dtdisc_t * disc)
-{
-    free (pp);
+static int cmppair(void *k1, void *k2) {
+    const pointf *key1 = k1;
+    const pointf *key2 = k2;
+    if (key1->x > key2->x)
+	return 1;
+    else if (key1->x < key2->x)
+	return -1;
+    else if (key1->y > key2->y)
+	return 1;
+    else if (key1->y < key2->y)
+	return -1;
+    else
+	return 0;
 }
 
-static int cmppair(Dt_t * d, point * key1, point * key2, Dtdisc_t * disc)
-{
+static int cmpmpair(void *k1, void *k2) {
+    const point *key1 = k1;
+    const point *key2 = k2;
     if (key1->x > key2->x)
 	return 1;
     else if (key1->x < key2->x)
@@ -50,14 +60,11 @@ static int cmppair(Dt_t * d, point * key1, point * key2, Dtdisc_t * disc)
 
 static Dtdisc_t intPairDisc = {
     offsetof(pair, id),
-    sizeof(point),
+    sizeof(pointf),
     offsetof(pair, link),
     0,
-    (Dtfree_f) freePair,
-    (Dtcompar_f) cmppair,
-    0,
-    0,
-    0
+    free,
+    cmppair,
 };
 
 PointSet *newPS(void)
@@ -70,8 +77,7 @@ void freePS(PointSet * ps)
     dtclose(ps);
 }
 
-void insertPS(PointSet * ps, point pt)
-{
+void insertPS(PointSet *ps, pointf pt) {
     pair *pp;
 
     pp = mkPair(pt);
@@ -79,31 +85,21 @@ void insertPS(PointSet * ps, point pt)
         free(pp);
 }
 
-void addPS(PointSet * ps, int x, int y)
-{
-    point pt;
-    pair *pp;
-
-    pt.x = x;
-    pt.y = y;
-    pp = mkPair(pt);
+void addPS(PointSet *ps, double x, double y) {
+    const pointf pt = {.x = x, .y = y};
+    pair *pp = mkPair(pt);
     if (dtinsert(ps, pp) != pp)
         free(pp);
 }
 
-int inPS(PointSet * ps, point pt)
-{
+int inPS(PointSet *ps, pointf pt) {
     pair p;
     p.id = pt;
-    return ((dtsearch(ps, &p)) ? 1 : 0);
+    return dtsearch(ps, &p) ? 1 : 0;
 }
 
-int isInPS(PointSet * ps, int x, int y)
-{
-    pair p;
-    p.id.x = x;
-    p.id.y = y;
-    return ((dtsearch(ps, &p)) ? 1 : 0);
+int isInPS(PointSet *ps, double x, double y) {
+  return inPS(ps, (pointf){.x = x, .y = y});
 }
 
 int sizeOf(PointSet * ps)
@@ -111,15 +107,14 @@ int sizeOf(PointSet * ps)
     return dtsize(ps);
 }
 
-point *pointsOf(PointSet * ps)
-{
-    int n = dtsize(ps);
-    point *pts = N_NEW(n, point);
+pointf *pointsOf(PointSet *ps) {
+    const size_t n = (size_t)dtsize(ps);
+    pointf *pts = gv_calloc(n, sizeof(pointf));
     pair *p;
-    point *pp = pts;
+    pointf *pp = pts;
 
     for (p = (pair *) dtflatten(ps); p;
-	 p = (pair *) dtlink(ps, (Dtlink_t *) p)) {
+	 p = (pair *)dtlink(ps, p)) {
 	*pp++ = p->id;
     }
 
@@ -132,51 +127,27 @@ typedef struct {
     int v;
 } mpair;
 
-typedef struct {
-    Dtdisc_t disc;
-    mpair *flist;
-} MPairDisc;
-
-static mpair *mkMPair(Dt_t * d, mpair * obj, MPairDisc * disc)
-{
-    mpair *ap;
-
-    if (disc->flist) {
-	ap = disc->flist;
-	disc->flist = (mpair *) (ap->link.right);
-    } else
-	ap = GNEW(mpair);
+static void *mkMPair(void *p, Dtdisc_t *disc) {
+    (void)disc;
+    mpair *obj = p;
+    mpair *ap = gv_alloc(sizeof(mpair));
     ap->id = obj->id;
     ap->v = obj->v;
     return ap;
-}
-
-static void freeMPair(Dt_t * d, mpair * ap, MPairDisc * disc)
-{
-    ap->link.right = (Dtlink_t *) (disc->flist);
-    disc->flist = ap;
 }
 
 static Dtdisc_t intMPairDisc = {
     offsetof(mpair, id),
     sizeof(point),
     offsetof(mpair, link),
-    (Dtmake_f) mkMPair,
-    (Dtfree_f) freeMPair,
-    (Dtcompar_f) cmppair,
-    0,
-    0,
-    0
+    mkMPair,
+    free,
+    cmpmpair,
 };
 
 PointMap *newPM(void)
 {
-    MPairDisc *dp = GNEW(MPairDisc);
-
-    dp->disc = intMPairDisc;
-    dp->flist = 0;
-
-    return (dtopen(&(dp->disc), Dtoset));
+  return dtopen(&intMPairDisc, Dtoset);
 }
 
 void clearPM(PointMap * ps)
@@ -186,41 +157,17 @@ void clearPM(PointMap * ps)
 
 void freePM(PointMap * ps)
 {
-    MPairDisc *dp = (MPairDisc *) (ps->disc);
-    mpair *p;
-    mpair *next;
-
     dtclose(ps);
-    for (p = dp->flist; p; p = next) {
-	next = (mpair *) (p->link.right);
-	free(p);
-    }
-    free(dp);
 }
 
-int updatePM(PointMap * pm, int x, int y, int v)
-{
-    mpair *p;
-    mpair dummy;
-    int old;
-
-    dummy.id.x = x;
-    dummy.id.y = y;
-    dummy.v = v;
-    p = dtinsert(pm, &dummy);
-    old = p->v;
-    p->v = v;
-    return old;
-}
-
-int insertPM(PointMap * pm, int x, int y, int v)
+int insertPM(PointMap * pm, int x, int y, int value)
 {
     mpair *p;
     mpair dummy;
 
     dummy.id.x = x;
     dummy.id.y = y;
-    dummy.v = v;
+    dummy.v = value;
     p = dtinsert(pm, &dummy);
     return p->v;
 }

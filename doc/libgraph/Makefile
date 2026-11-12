@@ -2,6 +2,7 @@ TEX=latex
 PTEX=pdflatex
 DVI=dvips
 
+.PHONY: all
 all : Agraph.pdf
 
 %.pdf : %.dot
@@ -15,8 +16,6 @@ Agraph.ps : Agraph.dvi
 	@if grep "Label(s) may have changed" Agraph.log; then $(TEX) Agraph.tex; fi
 	$(DVI) -o Agraph.ps Agraph
 	
-TEXS = graph.tex sccmap.tex agmemread.tex
-
 sccmap.tex : sccmap.c
 	lgrind -i -c -t 4 -l C sccmap.c > sccmap.tex
 
@@ -26,6 +25,7 @@ agmemread.tex : agmemread.c
 Agraph.aux : Agraph.tex
 	$(TEX) Agraph
 
+.PHONY: clean
 clean: 
 	rm -rf *.bbl *.aux *.dvi *.ps *.pdf *.log *.toc *.blg
 

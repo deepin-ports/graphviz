@@ -1,29 +1,28 @@
-# $Id$ $Revision$
 ## Process this file with automake to produce Makefile.in
 
-pdfdir = $(pkgdatadir)/doc/pdf
-
 AM_CPPFLAGS = \
-        -I$(top_srcdir) \
-        -I$(top_srcdir)/lib/ingraphs \
-	-I$(top_srcdir)/lib/cgraph \
+	-I$(top_srcdir)/lib \
 	-I$(top_srcdir)/lib/cdt
 
 bin_PROGRAMS = prune
-noinst_HEADERS = generic_list.h
-man_MANS = prune.1
-pdf_DATA = prune.pdf
+dist_man_MANS = prune.1
+if ENABLE_MAN_PDFS
+pdf_DATA = prune.1.pdf
+endif
 
-prune_SOURCES = generic_list.c prune.c
+prune_SOURCES = prune.c
 
-prune_LDADD = $(top_builddir)/lib/ingraphs/libingraphs_C.la \
+prune_LDADD = \
 	$(top_builddir)/lib/cgraph/libcgraph.la \
-	$(top_builddir)/lib/cdt/libcdt.la
+	$(top_builddir)/lib/cdt/libcdt.la \
+	$(top_builddir)/lib/util/libutil_C.la
 
-.1.pdf:
-	- @GROFF@ -Tps -man $< | @PS2PDF@ - - >$@
+.1.1.pdf:
+	rm -f $@; pdffile=$@; psfile=$${pdffile%pdf}ps; \
+	$(GROFF) -Tps -man $< > $$psfile || { rm -f $$psfile; exit 1; }; \
+	$(PS2PDF) $$psfile && rm -f $$psfile || { rm -f $$psfile; exit 1; }
+SUFFIXES = .1 .1.pdf
 
-EXTRA_DIST = $(man_MANS) $(pdf_DATA) README test.gv prune.vcxproj*
-
+EXTRA_DIST = README test.gv
 
 DISTCLEANFILES = $(pdf_DATA)

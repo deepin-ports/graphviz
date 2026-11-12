@@ -1,43 +1,57 @@
-/* $Id$Revision: */
-/* vim:set shiftwidth=4 ts=8: */
-
+/// @file
+/// @ingroup common_render
 /*************************************************************************
  * Copyright (c) 2011 AT&T Intellectual Property 
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
- * http://www.eclipse.org/legal/epl-v10.html
+ * https://www.eclipse.org/legal/epl-v10.html
  *
- * Contributors: See CVS logs. Details at http://www.graphviz.org/
+ * Contributors: Details at https://graphviz.org
  *************************************************************************/
 
+// Implementation of HTML-like tables.
+//
+// The (now purged) CodeGen graphics model, especially with integral
+// coordinates, is not adequate to handle this as we would like. In particular,
+// it is difficult to handle notions of adjacency and correct rounding to
+// pixels. For example, if 2 adjacent boxes bb1.UR.x == bb2.LL.x, the rectangles
+// may be drawn overlapping. However, if we use bb1.UR.x+1 == bb2.LL.x
+// there may or may not be a gap between them, even in the same device
+// depending on their positions. When CELLSPACING > 1, this isn't as much
+// of a problem.
+//
+// We allow negative spacing as a hack to allow overlapping cell boundaries.
+// For the reasons discussed above, this is difficult to get correct.
+// This is an important enough case we should extend the table model to
+// support it correctly. This could be done by allowing a table attribute,
+// e.g., CELLGRID=n, which sets CELLBORDER=0 and has the border drawing
+// handled correctly by the table.
 
-/* Implementation of HTML-like tables.
- * 
- * The (now purged) CodeGen graphics model, especially with integral coodinates, is
- * not adequate to handle this as we would like. In particular, it is
- * difficult to handle notions of adjacency and correct rounding to pixels.
- * For example, if 2 adjacent boxes bb1.UR.x == bb2.LL.x, the rectangles
- * may be drawn overlapping. However, if we use bb1.UR.x+1 == bb2.LL.x
- * there may or may not be a gap between them, even in the same device
- * depending on their positions. When CELLSPACING > 1, this isn't as much
- * of a problem.
- *
- * We allow negative spacing as a hack to allow overlapping cell boundaries.
- * For the reasons discussed above, this is difficult to get correct.
- * This is an important enough case we should extend the table model to
- * support it correctly. This could be done by allowing a table attribute,
- * e.g., CELLGRID=n, which sets CELLBORDER=0 and has the border drawing
- * handled correctly by the table.
- */
+#include "config.h"
 
 #include <assert.h>
-#include "render.h"
-#include "htmltable.h"
-#include "agxbuf.h"
-#include "pointset.h"
-#include "intset.h"
-#include "cdt.h"
+#include <common/render.h>
+#include <common/htmltable.h>
+#include <common/pointset.h>
+#include <cdt/cdt.h>
+#include <float.h>
+#include <inttypes.h>
+#include <limits.h>
+#include <math.h>
+#include <stddef.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <util/agxbuf.h>
+#include <util/alloc.h>
+#include <util/bitarray.h>
+#include <util/exit.h>
+#include <util/gv_math.h>
+#include <util/prisize_t.h>
+#include <util/strcasecmp.h>
+#include <util/streq.h>
+#include <util/unreachable.h>
 
 #define DEFAULT_BORDER    1
 #define DEFAULT_CELLPADDING  2
@@ -48,7 +62,7 @@ typedef struct {
     char *tooltip;
     char *target;
     char *id;
-    boolean explicit_tooltip;
+    bool explicit_tooltip;
     point LL;
     point UR;
 } htmlmap_data_t;
@@ -57,8 +71,7 @@ typedef struct {
 static void printCell(htmlcell_t * cp, int ind);
 #endif
 
-/* pushFontInfo:
- * Replace current font attributes in env with ones from fp,
+/* Replace current font attributes in env with ones from fp,
  * storing old attributes in savp. We only deal with attributes
  * set in env. The attributes are restored via popFontInfo.
  */
@@ -88,8 +101,7 @@ pushFontInfo(htmlenv_t * env, textfont_t * fp, textfont_t * savp)
     }
 }
 
-/* popFontInfo:
- * Restore saved font attributes.
+/* Restore saved font attributes.
  * Copy only set values.
  */
 static void popFontInfo(htmlenv_t * env, textfont_t * savp)
@@ -103,10 +115,9 @@ static void popFontInfo(htmlenv_t * env, textfont_t * savp)
 }
 
 static void
-emit_htextspans(GVJ_t * job, int nspans, htextspan_t * spans, pointf p,
+emit_htextspans(GVJ_t *job, size_t nspans, htextspan_t *spans, pointf p,
 		double halfwidth_x, textfont_t finfo, boxf b, int simple)
 {
-    int i, j;
     double center_x, left_x, right_x;
     textspan_t tl;
     textfont_t tf;
@@ -123,7 +134,7 @@ emit_htextspans(GVJ_t * job, int nspans, htextspan_t * spans, pointf p,
     p_.y = p.y + (b.UR.y - b.LL.y) / 2.0;
 
     gvrender_begin_label(job, LABEL_HTML);
-    for (i = 0; i < nspans; i++) {
+    for (size_t i = 0; i < nspans; i++) {
 	/* set p.x to leftmost point where the line of text begins */
 	switch (spans[i].just) {
 	case 'l':
@@ -140,8 +151,8 @@ emit_htextspans(GVJ_t * job, int nspans, htextspan_t * spans, pointf p,
 	p_.y -= spans[i].lfsize;	/* move to current base line */
 
 	ti = spans[i].items;
-	for (j = 0; j < spans[i].nitems; j++) {
-	    if (ti->font && (ti->font->size > 0))
+	for (size_t j = 0; j < spans[i].nitems; j++) {
+	    if (ti->font && ti->font->size > 0)
 		tf.size = ti->font->size;
 	    else
 		tf.size = finfo.size;
@@ -192,9 +203,9 @@ static void emit_html_txt(GVJ_t * job, htmltxt_t * tp, htmlenv_t * env)
     if (tp->nspans < 1)
 	return;
 
-    halfwidth_x = ((double) (tp->box.UR.x - tp->box.LL.x)) / 2.0;
-    p.x = env->pos.x + ((double) (tp->box.UR.x + tp->box.LL.x)) / 2.0;
-    p.y = env->pos.y + ((double) (tp->box.UR.y + tp->box.LL.y)) / 2.0;
+    halfwidth_x = (tp->box.UR.x - tp->box.LL.x) / 2.0;
+    p.x = env->pos.x + (tp->box.UR.x + tp->box.LL.x) / 2.0;
+    p.y = env->pos.y + (tp->box.UR.y + tp->box.LL.y) / 2.0;
 
     emit_htextspans(job, tp->nspans, tp->spans, p, halfwidth_x, env->finfo,
 		    tp->box, tp->simple);
@@ -210,8 +221,7 @@ static void doSide(GVJ_t * job, pointf p, double wd, double ht)
     gvrender_box(job, BF, 1);
 }
 
-/* mkPts:
- * Convert boxf into four corner points
+/* Convert boxf into four corner points
  * If border is > 1, inset the points by half the border.
  * It is assumed AF is pointf[4], so the data is store there
  * and AF is returned.
@@ -221,7 +231,7 @@ static pointf *mkPts(pointf * AF, boxf b, int border)
     AF[0] = b.LL;
     AF[2] = b.UR;
     if (border > 1) {
-	double delta = ((double) border) / 2.0;
+	const double delta = border / 2.0;
 	AF[0].x += delta;
 	AF[0].y += delta;
 	AF[2].x -= delta;
@@ -235,8 +245,7 @@ static pointf *mkPts(pointf * AF, boxf b, int border)
     return AF;
 }
 
-/* doBorder:
- * Draw a rectangular border for the box b.
+/* Draw a rectangular border for the box b.
  * Handles dashed and dotted styles, rounded corners.
  * Also handles thick lines.
  * Assume dp->border > 0
@@ -245,23 +254,24 @@ static void doBorder(GVJ_t * job, htmldata_t * dp, boxf b)
 {
     pointf AF[7];
     char *sptr[2];
-    char *color = (dp->pencolor ? dp->pencolor : DEFAULT_COLOR);
+    char *color = dp->pencolor ? dp->pencolor : DEFAULT_COLOR;
     unsigned short sides;
 
     gvrender_set_pencolor(job, color);
-    if ((dp->style & (DASHED | DOTTED))) {
+    if (dp->style.dashed || dp->style.dotted) {
 	sptr[0] = sptr[1] = NULL;
-	if (dp->style & DASHED)
+	if (dp->style.dashed)
 	    sptr[0] = "dashed";
-	else if (dp->style & DOTTED)
+	else if (dp->style.dotted)
 	    sptr[0] = "dotted";
 	gvrender_set_style(job, sptr);
     } else
 	gvrender_set_style(job, job->gvc->defaultlinestyle);
     gvrender_set_penwidth(job, dp->border);
 
-    if (dp->style & ROUNDED)
-	round_corners(job, mkPts(AF, b, dp->border), 4, ROUNDED, 0);
+    if (dp->style.rounded)
+	round_corners(job, mkPts(AF, b, dp->border), 4,
+	              (graphviz_polygon_style_t){.rounded = true}, 0);
     else if ((sides = (dp->flags & BORDER_MASK))) {
 	mkPts (AF+1, b, dp->border);  /* AF[1-4] has LL=SW,SE,UR=NE,NW */
 	switch (sides) {
@@ -317,10 +327,12 @@ static void doBorder(GVJ_t * job, htmldata_t * dp, boxf b)
 	    gvrender_polyline(job, AF, 2);
 	    gvrender_polyline(job, AF+2, 2);
 	    break;
+	default:
+	    break;
 	}
     } else {
 	if (dp->border > 1) {
-	    double delta = ((double) dp->border) / 2.0;
+	    const double delta = dp->border / 2.0;
 	    b.LL.x += delta;
 	    b.LL.y += delta;
 	    b.UR.x -= delta;
@@ -330,22 +342,20 @@ static void doBorder(GVJ_t * job, htmldata_t * dp, boxf b)
     }
 }
 
-/* setFill:
- * Set up fill values from given color; make pen transparent.
+/* Set up fill values from given color; make pen transparent.
  * Return type of fill required.
  */
-static int
-setFill(GVJ_t * job, char *color, int angle, int style, char *clrs[2])
-{
+static int setFill(GVJ_t *job, char *color, int angle, htmlstyle_t style,
+                   char *clrs[2]) {
     int filled;
-    float frac;
+    double frac;
     if (findStopColor(color, clrs, &frac)) {
 	gvrender_set_fillcolor(job, clrs[0]);
 	if (clrs[1])
 	    gvrender_set_gradient_vals(job, clrs[1], angle, frac);
 	else
 	    gvrender_set_gradient_vals(job, DEFAULT_COLOR, angle, frac);
-	if (style & RADIAL)
+	if (style.radial)
 	    filled = RGRADIENT;
 	else
 	    filled = GRADIENT;
@@ -357,8 +367,7 @@ setFill(GVJ_t * job, char *color, int angle, int style, char *clrs[2])
     return filled;
 }
 
-/* initAnchor:
- * Save current map values.
+/* Save current map values.
  * Initialize fields in job->obj pertaining to anchors.
  * In particular, this also sets the output rectangle.
  * If there is something to do, 
@@ -373,37 +382,28 @@ initAnchor(GVJ_t * job, htmlenv_t * env, htmldata_t * data, boxf b,
   htmlmap_data_t * save)
 {
     obj_state_t *obj = job->obj;
-    int changed;
     char *id;
     static int anchorId;
-    int internalId = 0;
-    agxbuf xb;
-    char intbuf[30];		/* hold 64-bit decimal integer */
-    unsigned char buf[SMALLBUF];
+    agxbuf xb = {0};
 
     save->url = obj->url;
     save->tooltip = obj->tooltip;
     save->target = obj->target;
     save->id = obj->id;
-    save->explicit_tooltip = obj->explicit_tooltip;
+    save->explicit_tooltip = obj->explicit_tooltip != 0;
     id = data->id;
     if (!id || !*id) {		/* no external id, so use the internal one */
-	agxbinit(&xb, SMALLBUF, buf);
 	if (!env->objid) {
-	    env->objid = strdup(getObjId(job, obj->u.n, &xb));
-	    env->objid_set = 1;
+	    env->objid = gv_strdup(getObjId(job, obj->u.n, &xb));
+	    env->objid_set = true;
 	}
-	agxbput(&xb, env->objid);
-	sprintf(intbuf, "_%d", anchorId++);
-	agxbput(&xb, intbuf);
+	agxbprint(&xb, "%s_%d", env->objid, anchorId++);
 	id = agxbuse(&xb);
-	internalId = 1;
     }
-    changed =
+    const bool changed =
 	initMapData(job, NULL, data->href, data->title, data->target, id,
 		    obj->u.g);
-    if (internalId)
-	agxbfree(&xb);
+    agxbfree(&xb);
 
     if (changed) {
 	if (obj->url || obj->explicit_tooltip) {
@@ -419,8 +419,7 @@ initAnchor(GVJ_t * job, htmlenv_t * env, htmldata_t * data, boxf b,
 #define RESET(fld) \
   if(obj->fld != save->fld) {free(obj->fld); obj->fld = save->fld;}
 
-/* endAnchor:
- * Pop context pushed by initAnchor.
+/* Pop context pushed by initAnchor.
  * This is done by ending current anchor, restoring old values and
  * freeing new.
  *
@@ -443,11 +442,9 @@ static void endAnchor(GVJ_t * job, htmlmap_data_t * save)
     obj->explicit_tooltip = save->explicit_tooltip;
 }
 
-/* forward declaration */
 static void emit_html_cell(GVJ_t * job, htmlcell_t * cp, htmlenv_t * env);
 
-/* emit_html_rules:
- * place vertical and horizontal lines between adjacent cells and
+/* place vertical and horizontal lines between adjacent cells and
  * extend the lines to intersect the rounded table boundary 
  */
 static void
@@ -455,8 +452,7 @@ emit_html_rules(GVJ_t * job, htmlcell_t * cp, htmlenv_t * env, char *color, html
 {
     pointf rule_pt;
     double rule_length;
-    unsigned char base;
-    boxf pts = cp->data.box;
+    double base;
     pointf pos = env->pos;
 
     if (!color)
@@ -464,19 +460,19 @@ emit_html_rules(GVJ_t * job, htmlcell_t * cp, htmlenv_t * env, char *color, html
     gvrender_set_fillcolor(job, color);
     gvrender_set_pencolor(job, color);
 
-    pts = cp->data.box;
+    boxf pts = cp->data.box;
     pts.LL.x += pos.x;
     pts.UR.x += pos.x;
     pts.LL.y += pos.y;
     pts.UR.y += pos.y;
 
     //Determine vertical line coordinate and length
-    if ((cp->ruled & HTML_VRULE) && (cp->col + cp->cspan < cp->parent->cc)) {
+    if (cp->vruled && cp->col + cp->colspan < cp->parent->column_count) {
 	if (cp->row == 0) {	// first row
 	    // extend to center of table border and add half cell spacing
 	    base = cp->parent->data.border + cp->parent->data.space / 2;
 	    rule_pt.y = pts.LL.y - cp->parent->data.space / 2;
-	} else if (cp->row + cp->rspan == cp->parent->rc) {	// bottom row
+	} else if (cp->row + cp->rowspan == cp->parent->row_count) { // bottom row
 	    // extend to center of table border and add half cell spacing
 	    base = cp->parent->data.border + cp->parent->data.space / 2;
 	    rule_pt.y = pts.LL.y - cp->parent->data.space / 2 - base;
@@ -489,18 +485,18 @@ emit_html_rules(GVJ_t * job, htmlcell_t * cp, htmlenv_t * env, char *color, html
 	doSide(job, rule_pt, 0, rule_length);
     }
     //Determine the horizontal coordinate and length
-    if ((cp->ruled & HTML_HRULE) && (cp->row + cp->rspan < cp->parent->rc)) {
+    if (cp->hruled && cp->row + cp->rowspan < cp->parent->row_count) {
 	if (cp->col == 0) {	// first column 
 	    // extend to center of table border and add half cell spacing
 	    base = cp->parent->data.border + cp->parent->data.space / 2;
 	    rule_pt.x = pts.LL.x - base - cp->parent->data.space / 2;
-	    if (cp->col + cp->cspan == cp->parent->cc)	// also last column
+	    if (cp->col + cp->colspan == cp->parent->column_count)	// also last column
 		base *= 2;
 	    /* incomplete row of cells; extend line to end */
-	    else if (nextc && (nextc->row != cp->row)) {
-		base += (cp->parent->data.box.UR.x + pos.x) - (pts.UR.x + cp->parent->data.space / 2);
+	    else if (nextc && nextc->row != cp->row) {
+		base += cp->parent->data.box.UR.x + pos.x - (pts.UR.x + cp->parent->data.space / 2);
 	    }
-	} else if (cp->col + cp->cspan == cp->parent->cc) {	// last column
+	} else if (cp->col + cp->colspan == cp->parent->column_count) {	// last column
 	    // extend to center of table border and add half cell spacing
 	    base = cp->parent->data.border + cp->parent->data.space / 2;
 	    rule_pt.x = pts.LL.x - cp->parent->data.space / 2;
@@ -508,8 +504,8 @@ emit_html_rules(GVJ_t * job, htmlcell_t * cp, htmlenv_t * env, char *color, html
 	    base = 0;
 	    rule_pt.x = pts.LL.x - cp->parent->data.space / 2;
 	    /* incomplete row of cells; extend line to end */
-	    if (nextc && (nextc->row != cp->row)) {
-		base += (cp->parent->data.box.UR.x + pos.x) - (pts.UR.x + cp->parent->data.space / 2);
+	    if (nextc && nextc->row != cp->row) {
+		base += cp->parent->data.box.UR.x + pos.x - (pts.UR.x + cp->parent->data.space / 2);
 	    }
 	}
 	rule_pt.y = pts.LL.y - cp->parent->data.space / 2;
@@ -522,12 +518,12 @@ static void emit_html_tbl(GVJ_t * job, htmltbl_t * tbl, htmlenv_t * env)
 {
     boxf pts = tbl->data.box;
     pointf pos = env->pos;
-    htmlcell_t **cells = tbl->u.n.cells;
+    htmlcell_t **cells = tbl->cells;
     htmlcell_t *cp;
     static textfont_t savef;
     htmlmap_data_t saved;
     int anchor;			/* if true, we need to undo anchor settings. */
-    int doAnchor = (tbl->data.href || tbl->data.target);
+    const bool doAnchor = tbl->data.href || tbl->data.target || tbl->data.title;
     pointf AF[4];
 
     if (tbl->font)
@@ -543,20 +539,21 @@ static void emit_html_tbl(GVJ_t * job, htmltbl_t * tbl, htmlenv_t * env)
     else
 	anchor = 0;
 
-    if (!(tbl->data.style & INVISIBLE)) {
+    if (!tbl->data.style.invisible) {
 
 	/* Fill first */
 	if (tbl->data.bgcolor) {
-	    char *clrs[2];
+	    char *clrs[2] = {0};
 	    int filled =
 		setFill(job, tbl->data.bgcolor, tbl->data.gradientangle,
 			tbl->data.style, clrs);
-	    if (tbl->data.style & ROUNDED) {
+	    if (tbl->data.style.rounded) {
 		round_corners(job, mkPts(AF, pts, tbl->data.border), 4,
-			      ROUNDED, filled);
+		              (graphviz_polygon_style_t){.rounded = true}, filled);
 	    } else
 		gvrender_box(job, pts, filled);
 	    free(clrs[0]);
+	    free(clrs[1]);
 	}
 
 	while (*cells) {
@@ -569,10 +566,10 @@ static void emit_html_tbl(GVJ_t * job, htmltbl_t * tbl, htmlenv_t * env)
 	 * At present, we set the penwidth to 1 for rules until we provide the calculations to take
 	 * into account wider rules.
 	 */
-	cells = tbl->u.n.cells;
+	cells = tbl->cells;
 	gvrender_set_penwidth(job, 1.0);
 	while ((cp = *cells++)) {
-	    if (cp->ruled)
+	    if (cp->hruled || cp->vruled)
 		emit_html_rules(job, cp, env, tbl->data.pencolor, *cells);
 	}
 
@@ -593,8 +590,7 @@ static void emit_html_tbl(GVJ_t * job, htmltbl_t * tbl, htmlenv_t * env)
 	popFontInfo(env, &savef);
 }
 
-/* emit_html_img:
- * The image will be centered in the given box.
+/* The image will be centered in the given box.
  * Scaling is determined by either the image's scale attribute,
  * or the imagescale attribute of the graph object being drawn.
  */
@@ -622,7 +618,7 @@ static void emit_html_img(GVJ_t * job, htmlimg_t * cp, htmlenv_t * env)
 	scale = env->imgscale;
     assert(cp->src);
     assert(cp->src[0]);
-    gvrender_usershape(job, cp->src, A, 4, TRUE, scale, "mc");
+    gvrender_usershape(job, cp->src, A, 4, true, scale, "mc");
 }
 
 static void emit_html_cell(GVJ_t * job, htmlcell_t * cp, htmlenv_t * env)
@@ -630,7 +626,8 @@ static void emit_html_cell(GVJ_t * job, htmlcell_t * cp, htmlenv_t * env)
     htmlmap_data_t saved;
     boxf pts = cp->data.box;
     pointf pos = env->pos;
-    int inAnchor, doAnchor = (cp->data.href || cp->data.target);
+    int inAnchor;
+    const bool doAnchor = cp->data.href || cp->data.target || cp->data.title;
     pointf AF[4];
 
     pts.LL.x += pos.x;
@@ -643,15 +640,15 @@ static void emit_html_cell(GVJ_t * job, htmlcell_t * cp, htmlenv_t * env)
     else
 	inAnchor = 0;
 
-    if (!(cp->data.style & INVISIBLE)) {
+    if (!cp->data.style.invisible) {
 	if (cp->data.bgcolor) {
 	    char *clrs[2];
 	    int filled =
 		setFill(job, cp->data.bgcolor, cp->data.gradientangle,
 			cp->data.style, clrs);
-	    if (cp->data.style & ROUNDED) {
+	    if (cp->data.style.rounded) {
 		round_corners(job, mkPts(AF, pts, cp->data.border), 4,
-			      ROUNDED, filled);
+			      (graphviz_polygon_style_t){.rounded = true}, filled);
 	    } else
 		gvrender_box(job, pts, filled);
 	    free(clrs[0]);
@@ -677,8 +674,7 @@ static void emit_html_cell(GVJ_t * job, htmlcell_t * cp, htmlenv_t * env)
     }
 }
 
-/* allocObj:
- * Push new obj on stack to be used in common by all 
+/* Push new obj on stack to be used in common by all 
  * html elements with anchors.
  * This inherits the type, emit_state, and object of the
  * parent, as well as the url, explicit, target and tooltip.
@@ -705,6 +701,8 @@ static void allocObj(GVJ_t * job)
     case EDGE_OBJTYPE:
 	obj->u.e = parent->u.e;
 	break;
+    default:
+	UNREACHABLE();
     }
     obj->url = parent->url;
     obj->tooltip = parent->tooltip;
@@ -738,12 +736,12 @@ heightOfLbl (htmllabel_t * lp)
     case HTML_TEXT:
 	sz  = lp->u.txt->box.UR.y - lp->u.txt->box.LL.y;
 	break;
+    default:
+	UNREACHABLE();
     }
     return sz;
 }
 
-/* emit_html_label:
- */
 void emit_html_label(GVJ_t * job, htmllabel_t * lp, textlabel_t * tp)
 {
     htmlenv_t env;
@@ -769,8 +767,8 @@ void emit_html_label(GVJ_t * job, htmllabel_t * lp, textlabel_t * tp)
     env.finfo.size = tp->fontsize;
     env.imgscale = agget(job->obj->u.n, "imagescale");
     env.objid = job->obj->id;
-    env.objid_set = 0;
-    if ((env.imgscale == NULL) || (env.imgscale[0] == '\0'))
+    env.objid_set = false;
+    if (env.imgscale == NULL || env.imgscale[0] == '\0')
 	env.imgscale = "false";
     if (lp->kind == HTML_TBL) {
 	htmltbl_t *tbl = lp->u.tbl;
@@ -804,31 +802,24 @@ void free_html_data(htmldata_t * dp)
 
 void free_html_text(htmltxt_t * t)
 {
-    htextspan_t *tl;
-    textspan_t *ti;
-    int i, j;
-
     if (!t)
 	return;
 
-    tl = t->spans;
-    for (i = 0; i < t->nspans; i++) {
-	ti = tl->items;
-	for (j = 0; j < tl->nitems; j++) {
-	    if (ti->str)
-		free(ti->str);
-	    if (ti->layout && ti->free_layout)
-		ti->free_layout(ti->layout);
-	    ti++;
+    htextspan_t *const tl = t->spans;
+    for (size_t i = 0; i < t->nspans; i++) {
+	textspan_t *const ti = tl[i].items;
+	for (size_t j = 0; j < tl[i].nitems; j++) {
+	    free(ti[j].str);
+	    if (ti[j].layout && ti[j].free_layout)
+		ti[j].free_layout(ti[j].layout);
 	}
-	tl++;
+	free(ti);
     }
-    if (t->spans)
-	free(t->spans);
+    free(tl);
     free(t);
 }
 
-void free_html_img(htmlimg_t * ip)
+static void free_html_img(htmlimg_t * ip)
 {
     free(ip->src);
     free(ip);
@@ -841,19 +832,19 @@ static void free_html_cell(htmlcell_t * cp)
     free(cp);
 }
 
-/* free_html_tbl:
- * If tbl->n_rows is negative, table is in initial state from
- * HTML parse, with data stored in u.p. Once run through processTbl,
- * data is stored in u.n and tbl->n_rows is > 0.
+/* If tbl->row_count is `SIZE_MAX`, table is in initial state from
+ * HTML parse, with data stored in `tbl->prev` and `tbl->rows`. Once run through
+ * processTbl, data is stored in `tbl->parent` and `tbl->cells`, and
+ * tbl->row_count is < `SIZE_MAX`.
  */
 static void free_html_tbl(htmltbl_t * tbl)
 {
     htmlcell_t **cells;
 
-    if (tbl->rc == -1) {
-	dtclose(tbl->u.p.rows);
+    if (tbl->row_count == SIZE_MAX) { // raw, parsed table
+	LIST_FREE(&tbl->rows);
     } else {
-	cells = tbl->u.n.cells;
+	cells = tbl->cells;
 
 	free(tbl->heights);
 	free(tbl->widths);
@@ -861,7 +852,7 @@ static void free_html_tbl(htmltbl_t * tbl)
 	    free_html_cell(*cells);
 	    cells++;
 	}
-	free(tbl->u.n.cells);
+	free(tbl->cells);
     }
     free_html_data(&tbl->data);
     free(tbl);
@@ -879,13 +870,13 @@ void free_html_label(htmllabel_t * lp, int root)
 	free(lp);
 }
 
-static htmldata_t *portToTbl(htmltbl_t *, char *);	/* forward declaration */
+static htmldata_t *portToTbl(htmltbl_t *, char *);
 
 static htmldata_t *portToCell(htmlcell_t * cp, char *id)
 {
     htmldata_t *rv;
 
-    if (cp->data.port && (strcasecmp(cp->data.port, id) == 0))
+    if (cp->data.port && strcasecmp(cp->data.port, id) == 0)
 	rv = &cp->data;
     else if (cp->child.kind == HTML_TBL)
 	rv = portToTbl(cp->child.u.tbl, id);
@@ -895,8 +886,7 @@ static htmldata_t *portToCell(htmlcell_t * cp, char *id)
     return rv;
 }
 
-/* portToTbl:
- * See if tp or any of its child cells has the given port id.
+/* See if tp or any of its child cells has the given port id.
  * If true, return corresponding box.
  */
 static htmldata_t *portToTbl(htmltbl_t * tp, char *id)
@@ -905,11 +895,11 @@ static htmldata_t *portToTbl(htmltbl_t * tp, char *id)
     htmlcell_t **cells;
     htmlcell_t *cp;
 
-    if (tp->data.port && (strcasecmp(tp->data.port, id) == 0))
+    if (tp->data.port && strcasecmp(tp->data.port, id) == 0)
 	rv = &tp->data;
     else {
 	rv = NULL;
-	cells = tp->u.n.cells;
+	cells = tp->cells;
 	while ((cp = *cells++)) {
 	    if ((rv = portToCell(cp, id)))
 		break;
@@ -919,14 +909,12 @@ static htmldata_t *portToTbl(htmltbl_t * tp, char *id)
     return rv;
 }
 
-/* html_port:
- * See if edge port corresponds to part of the html node.
- * Assume pname != "".
+/* See if edge port corresponds to part of the html node.
  * If successful, return pointer to port's box.
  * Else return NULL.
  */
-boxf *html_port(node_t * n, char *pname, int *sides)
-{
+boxf *html_port(node_t *n, char *pname, unsigned char *sides){
+    assert(pname != NULL && !streq(pname, ""));
     htmldata_t *tp;
     htmllabel_t *lbl = ND_label(n)->u.html;
     boxf *rv = NULL;
@@ -943,64 +931,6 @@ boxf *html_port(node_t * n, char *pname, int *sides)
 
 }
 
-/* html_path:
- * Return a box in a table containing the given endpoint.
- * If the top flow is text (no internal structure), return 
- * the box of the flow
- * Else return the box of the subtable containing the point.
- * Because of spacing, the point might not be in any subtable.
- * In that case, return the top flow's box.
- * Note that box[0] must contain the edge point. Additional boxes
- * move out to the boundary.
- *
- * At present, unimplemented, since the label may be inside a
- * non-box node and we need to figure out what this means.
- */
-int html_path(node_t * n, port * p, int side, boxf * rv, int *k)
-{
-#ifdef UNIMPL
-    point p;
-    tbl_t *info;
-    tbl_t *t;
-    boxf b;
-    int i;
-
-    info = (tbl_t *) ND_shape_info(n);
-    assert(info->tbls);
-    info = info->tbls[0];	/* top-level flow */
-    assert(IS_FLOW(info));
-
-    b = info->box;
-    if (info->tbl) {
-	info = info->tbl;
-	if (pt == 1)
-	    p = ED_tail_port(e).p;
-	else
-	    p = ED_head_port(e).p;
-	p = flip_pt(p, GD_rankdir(n->graph));	/* move p to node's coordinate system */
-	for (i = 0; (t = info->tbls[i]) != 0; i++)
-	    if (INSIDE(p, t->box)) {
-		b = t->box;
-		break;
-	    }
-    }
-
-    /* move box into layout coordinate system */
-    if (GD_flip(n->graph))
-	b = flip_trans_box(b, ND_coord_i(n));
-    else
-	b = move_box(b, ND_coord_i(n));
-
-    *k = 1;
-    *rv = b;
-    if (pt == 1)
-	return BOTTOM;
-    else
-	return TOP;
-#endif
-    return 0;
-}
-
 static int size_html_txt(GVC_t *gvc, htmltxt_t * ftxt, htmlenv_t * env)
 {
     double xsize = 0.0;		/* width of text block */
@@ -1009,23 +939,22 @@ static int size_html_txt(GVC_t *gvc, htmltxt_t * ftxt, htmlenv_t * env)
     double mxfsize = 0.0;	/* max. font size for the current line */
     double curbline = 0.0;	/* dist. of current base line from top */
     pointf sz;
-    int i, j;
     double width;
     textspan_t lp;
     textfont_t tf = {NULL,NULL,NULL,0.0,0,0};
-    double maxoffset, mxysize;
-    int simple = 1;              /* one item per span, same font size/face, no flags */
+    double maxoffset, mxysize = 0.0;
+    bool simple = true; // one item per span, same font size/face, no flags
     double prev_fsize = -1;
     char* prev_fname = NULL;
 
-    for (i = 0; i < ftxt->nspans; i++) {
+    for (size_t i = 0; i < ftxt->nspans; i++) {
 	if (ftxt->spans[i].nitems > 1) {
-	    simple = 0;
+	    simple = false;
 	    break;
 	}
 	if (ftxt->spans[i].items[0].font) {
 	    if (ftxt->spans[i].items[0].font->flags) {
-		simple = 0;
+		simple = false;
 		break;
 	    }
 	    if (ftxt->spans[i].items[0].font->size > 0)
@@ -1041,25 +970,25 @@ static int size_html_txt(GVC_t *gvc, htmltxt_t * ftxt, htmlenv_t * env)
 	    tf.size = env->finfo.size;
 	    tf.name = env->finfo.name;
 	}
-	if (prev_fsize == -1)
+	if (i == 0)
 	    prev_fsize = tf.size;
 	else if (tf.size != prev_fsize) {
-	    simple = 0;
+	    simple = false;
 	    break;
 	}
 	if (prev_fname == NULL)
 	    prev_fname = tf.name;
 	else if (strcmp(tf.name,prev_fname)) {
-	    simple = 0;
+	    simple = false;
 	    break;
 	}
     }
     ftxt->simple = simple;
 
-    for (i = 0; i < ftxt->nspans; i++) {
+    for (size_t i = 0; i < ftxt->nspans; i++) {
 	width = 0;
 	mxysize = maxoffset = mxfsize = 0;
-	for (j = 0; j < ftxt->spans[i].nitems; j++) {
+	for (size_t j = 0; j < ftxt->spans[i].nitems; j++) {
 	    lp.str =
 		strdup_and_subst_obj(ftxt->spans[i].items[j].str,
 				     env->obj);
@@ -1138,12 +1067,9 @@ static int size_html_txt(GVC_t *gvc, htmltxt_t * ftxt, htmlenv_t * env)
     return 0;
 }
 
-/* forward declarion for recursive usage */
 static int size_html_tbl(graph_t * g, htmltbl_t * tbl, htmlcell_t * parent,
 			 htmlenv_t * env);
 
-/* size_html_img:
- */
 static int size_html_img(htmlimg_t * img, htmlenv_t * env)
 {
     box b;
@@ -1151,21 +1077,19 @@ static int size_html_img(htmlimg_t * img, htmlenv_t * env)
 
     b.LL.x = b.LL.y = 0;
     b.UR = gvusershape_size(env->g, img->src);
-    if ((b.UR.x == -1) && (b.UR.y == -1)) {
+    if (b.UR.x == -1 && b.UR.y == -1) {
 	rv = 1;
 	b.UR.x = b.UR.y = 0;
-	agerr(AGERR, "No or improper image file=\"%s\"\n", img->src);
+	agerrorf("No or improper image file=\"%s\"\n", img->src);
     } else {
 	rv = 0;
-	GD_has_images(env->g) = TRUE;
+	GD_has_images(env->g) = true;
     }
 
     B2BF(b, img->box);
     return rv;
 }
 
-/* size_html_cell:
- */
 static int
 size_html_cell(graph_t * g, htmlcell_t * cp, htmltbl_t * parent,
 	       htmlenv_t * env)
@@ -1182,8 +1106,8 @@ size_html_cell(graph_t * g, htmlcell_t * cp, htmltbl_t * parent,
 	    cp->data.pad = DEFAULT_CELLPADDING;
     }
     if (!(cp->data.flags & BORDER_SET)) {
-	if (parent->cb >= 0)
-	    cp->data.border = parent->cb;
+	if (parent->cellborder >= 0)
+	    cp->data.border = (unsigned char)parent->cellborder;
 	else if (parent->data.flags & BORDER_SET)
 	    cp->data.border = parent->data.border;
 	else
@@ -1207,14 +1131,14 @@ size_html_cell(graph_t * g, htmlcell_t * cp, htmltbl_t * parent,
 
     if (cp->data.flags & FIXED_FLAG) {
 	if (cp->data.width && cp->data.height) {
-	    if (((cp->data.width < sz.x) || (cp->data.height < sz.y)) && (cp->child.kind != HTML_IMAGE)) {
-		agerr(AGWARN, "cell size too small for content\n");
+	    if ((cp->data.width < sz.x || cp->data.height < sz.y) && cp->child.kind != HTML_IMAGE) {
+		agwarningf("cell size too small for content\n");
 		rv = 1;
 	    }
 	    sz.x = sz.y = 0;
 
 	} else {
-	    agerr(AGWARN,
+	    agwarningf(
 		  "fixed cell size with unspecified width or height\n");
 	    rv = 1;
 	}
@@ -1224,12 +1148,11 @@ size_html_cell(graph_t * g, htmlcell_t * cp, htmltbl_t * parent,
     return rv;
 }
 
-static int findCol(PointSet * ps, int row, int col, htmlcell_t * cellp)
-{
+static uint16_t findCol(PointSet *ps, int row, int col, htmlcell_t *cellp) {
     int notFound = 1;
     int lastc;
     int i, j, c;
-    int end = cellp->cspan - 1;
+    int end = cellp->colspan - 1;
 
     while (notFound) {
 	lastc = col + end;
@@ -1242,337 +1165,215 @@ static int findCol(PointSet * ps, int row, int col, htmlcell_t * cellp)
 	else
 	    notFound = 0;
     }
-    for (j = col; j < col + cellp->cspan; j++) {
-	for (i = row; i < row + cellp->rspan; i++) {
+    for (j = col; j < col + cellp->colspan; j++) {
+	for (i = row; i < row + cellp->rowspan; i++) {
 	    addPS(ps, j, i);
 	}
     }
-    return col;
+    assert(col >= 0 && col <= UINT16_MAX);
+    return (uint16_t)col;
 }
 
-/* processTbl:
- * Convert parser representation of cells into final form.
+/* Convert parser representation of cells into final form.
  * Find column and row positions of cells.
  * Recursively size cells.
  * Return 1 if problem sizing a cell.
  */
 static int processTbl(graph_t * g, htmltbl_t * tbl, htmlenv_t * env)
 {
-    pitem *rp;
-    pitem *cp;
-    Dt_t *cdict;
-    int r, c;
-    htmlcell_t *cellp;
     htmlcell_t **cells;
-    Dt_t *rows = tbl->u.p.rows;
+    rows_t rows = tbl->rows;
     int rv = 0;
-    int n_rows = 0;
-    int n_cols = 0;
+    size_t n_rows = 0;
+    size_t n_cols = 0;
     PointSet *ps = newPS();
-    Dt_t *is = openIntSet();
+    bitarray_t is = bitarray_new((size_t)UINT16_MAX + 1);
 
-    rp = (pitem *) dtflatten(rows);
     size_t cnt = 0;
-    r = 0;
-    while (rp) {
-	cdict = rp->u.rp;
-	cp = (pitem *) dtflatten(cdict);
-	while (cp) {
-	    cellp = cp->u.cp;
-	    cnt++;
-	    cp = (pitem *) dtlink(cdict, (Dtlink_t *) cp);
-	}
+    for (uint16_t r = 0; r < LIST_SIZE(&rows); ++r) {
+	row_t *rp = LIST_GET(&rows, r);
+	cnt += LIST_SIZE(&rp->rp);
 	if (rp->ruled) {
-	    addIntSet(is, r + 1);
+	    bitarray_set(&is, r + 1, true);
 	}
-	rp = (pitem *) dtlink(rows, (Dtlink_t *) rp);
-	r++;
     }
 
-    cells = tbl->u.n.cells = N_NEW(cnt + 1, htmlcell_t *);
-    rp = (pitem *) dtflatten(rows);
-    r = 0;
-    while (rp) {
-	cdict = rp->u.rp;
-	cp = (pitem *) dtflatten(cdict);
-	c = 0;
-	while (cp) {
-	    cellp = cp->u.cp;
+    cells = tbl->cells = gv_calloc(cnt + 1, sizeof(htmlcell_t *));
+    for (uint16_t r = 0; r < LIST_SIZE(&rows); ++r) {
+	row_t *rp = LIST_GET(&rows, r);
+	uint16_t c = 0;
+	for (size_t i = 0; i < LIST_SIZE(&rp->rp); ++i) {
+	    htmlcell_t *cellp = LIST_GET(&rp->rp, i);
 	    *cells++ = cellp;
 	    rv |= size_html_cell(g, cellp, tbl, env);
 	    c = findCol(ps, r, c, cellp);
 	    cellp->row = r;
 	    cellp->col = c;
-	    c += cellp->cspan;
+	    c += cellp->colspan;
 	    n_cols = MAX(c, n_cols);
-	    n_rows = MAX(r + cellp->rspan, n_rows);
-	    if (inIntSet(is, r + cellp->rspan))
-		cellp->ruled |= HTML_HRULE;
-	    cp = (pitem *) dtlink(cdict, (Dtlink_t *) cp);
+	    n_rows = MAX(r + cellp->rowspan, n_rows);
+	    if (bitarray_get(is, r + cellp->rowspan))
+		cellp->hruled = true;
 	}
-	rp = (pitem *) dtlink(rows, (Dtlink_t *) rp);
-	r++;
     }
-    tbl->rc = n_rows;
-    tbl->cc = n_cols;
-    dtclose(rows);
-    dtclose(is);
+    tbl->row_count = n_rows;
+    tbl->column_count = n_cols;
+    LIST_FREE(&rows);
+    bitarray_reset(&is);
     freePS(ps);
     return rv;
 }
 
-/* Split size x over n pieces with spacing s.
- * We subtract s*(n-1) from x, divide by n and 
- * take the ceiling.
- */
-#define SPLIT(x,n,s) (((x) - ((s)-1)*((n)-1)) / (n))
+/// set the widths of HTML table cells
+///
+/// Graphviz HTML tables were implemented prior to HTML standardization, but
+/// the subsequent RFC 1942¹ provides some guidance on “Recommended Layout
+/// Algorithms.” Following this, the W3C gave a slightly clearer articulation of
+/// essentially the same guidance when specifying CSS.² Many features discussed
+/// in this algorithm are not present in Graphviz’ variant of HTML (e.g. widths
+/// as percentages) or are not relevant (e.g. the derivation of _maximum_ column
+/// widths seems only relevant if you are laying out a table within another
+/// elastically sized container like a browser window), but the algorithm is
+/// useful nonetheless. This function implements an adapted version of the CSS
+/// specification algorithm. Comments that include quotes are quoting the CSS
+/// specification.
+///
+/// ¹ https://www.ietf.org/rfc/rfc1942.txt
+/// ² https://www.w3.org/TR/CSS2/tables.html#width-layout
+///
+/// @param table Table to update
+static void set_cell_widths(htmltbl_t *table) {
 
-/* sizeLinearArray:
- * Determine sizes of rows and columns. The size of a column is the
- * maximum width of any cell in it. Similarly for rows.
- * A cell spanning columns contributes proportionately to each column
- * it is in.
- */
-void sizeLinearArray(htmltbl_t * tbl)
-{
-    htmlcell_t *cp;
-    htmlcell_t **cells;
-    int wd, ht, i, x, y;
+  // `processTbl` has already done step 1, “1. Calculate the minimum content
+  // width (MCW) of each cell”, and stored it in `.data.box.UR.x`.
 
-    tbl->heights = N_NEW(tbl->rc + 1, int);
-    tbl->widths = N_NEW(tbl->cc + 1, int);
+  // Allocate space for minimum column widths. Note that we add an extra entry
+  // to allow later code to make references like `table->widths[col + colspan]`.
+  assert(table->widths == NULL && "table widths computed twice");
+  table->widths = gv_calloc(table->column_count + 1, sizeof(double));
 
-    for (cells = tbl->u.n.cells; *cells; cells++) {
-	cp = *cells;
-	if (cp->rspan == 1)
-	    ht = cp->data.box.UR.y;
-	else {
-	    ht = SPLIT(cp->data.box.UR.y, cp->rspan, tbl->data.space);
-	    ht = MAX(ht, 1);
-	}
-	if (cp->cspan == 1)
-	    wd = cp->data.box.UR.x;
-	else {
-	    wd = SPLIT(cp->data.box.UR.x, cp->cspan, tbl->data.space);
-	    wd = MAX(wd, 1);
-	}
-	for (i = cp->row; i < cp->row + cp->rspan; i++) {
-	    y = tbl->heights[i];
-	    tbl->heights[i] = MAX(y, ht);
-	}
-	for (i = cp->col; i < cp->col + cp->cspan; i++) {
-	    x = tbl->widths[i];
-	    tbl->widths[i] = MAX(x, wd);
-	}
+  // “2. For each column, determine a … minimum column width from the cells that
+  // span only that column. The minimum is that required by the cell with the
+  // largest minimum cell width …”. Note that this loop and the following one
+  // could be fused, but this would make the implementation harder to relate
+  // back to the specification.
+  for (htmlcell_t **i = table->cells; *i != NULL; ++i) {
+    const htmlcell_t cell = **i;
+    if (cell.colspan > 1) {
+      continue;
     }
+    assert(cell.col < table->column_count && "out of range cell");
+    table->widths[cell.col] = fmax(table->widths[cell.col], cell.data.box.UR.x);
+  }
+
+  // “3. For each cell that spans more than one column, increase the minimum
+  // widths of the columns it spans so that together, they are at least as wide
+  // as the cell. … If possible, widen all spanned columns by approximately the
+  // same amount.”
+  for (htmlcell_t **i = table->cells; *i != NULL; ++i) {
+    const htmlcell_t cell = **i;
+    if (cell.colspan == 1) {
+      continue;
+    }
+
+    // what is the current width of this cell’s column(s)’ span?
+    double span_width = 0;
+    assert(cell.col + cell.colspan <= table->column_count &&
+           "cell spans wider than containing table");
+    for (size_t j = 0; j < cell.colspan; ++j) {
+      span_width += table->widths[cell.col + j];
+    }
+
+    // if it is wider than its span (including cell spacing), widen the span
+    const double spacing = (cell.colspan - 1) * table->data.space;
+    if (span_width + spacing < cell.data.box.UR.x) {
+      const double widen_by =
+          (cell.data.box.UR.x - spacing - span_width) / cell.colspan;
+      for (size_t j = 0; j < cell.colspan; ++j) {
+        table->widths[cell.col + j] += widen_by;
+      }
+    }
+  }
+
+  // take the minimum width for each column and apply it to its contained cells
+  for (htmlcell_t **i = table->cells; *i != NULL; ++i) {
+    htmlcell_t *cell = *i;
+
+    // what is the current width of this cell’s column(s)’ span?
+    double min_width = 0;
+    assert(cell->col + cell->colspan <= table->column_count &&
+           "cell spans wider than containing table");
+    for (size_t j = 0; j < cell->colspan; ++j) {
+      min_width += table->widths[cell->col + j];
+    }
+
+    // widen the cell if necessary
+    const double spacing = (cell->colspan - 1) * table->data.space;
+    cell->data.box.UR.x = fmax(cell->data.box.UR.x, min_width + spacing);
+  }
 }
 
-static char *nnames[] = {
-    "0", "1", "2", "3", "4", "5", "6", "7", "8", "9",
-    "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20",
-};
+/// set the heights of HTML table cells
+///
+/// This recapitulates the logic of `set_cell_widths` on rows.
+///
+/// @param table Table to update
+static void set_cell_heights(htmltbl_t *table) {
 
-/* nToName:
- * Convert int to its decimal string representation.
- */
-char *nToName(int c)
-{
-    static char name[100];
+  assert(table->heights == NULL && "table heights computed twice");
+  table->heights = gv_calloc(table->row_count + 1, sizeof(double));
 
-    if (c < sizeof(nnames) / sizeof(char *))
-	return nnames[c];
+  for (htmlcell_t **i = table->cells; *i != NULL; ++i) {
+    const htmlcell_t cell = **i;
+    if (cell.rowspan > 1) {
+      continue;
+    }
+    assert(cell.row < table->row_count && "out of range cell");
+    table->heights[cell.row] =
+        fmax(table->heights[cell.row], cell.data.box.UR.y);
+  }
 
-    sprintf(name, "%d", c);
-    return name;
+  for (htmlcell_t **i = table->cells; *i != NULL; ++i) {
+    const htmlcell_t cell = **i;
+    if (cell.rowspan == 1) {
+      continue;
+    }
+
+    double span_height = 0;
+    assert(cell.row + cell.rowspan <= table->row_count &&
+           "cell spans higher than containing table");
+    for (size_t j = 0; j < cell.rowspan; ++j) {
+      span_height += table->heights[cell.row + j];
+    }
+
+    const double spacing = (cell.rowspan - 1) * table->data.space;
+    if (span_height + spacing < cell.data.box.UR.y) {
+      const double heighten_by =
+          (cell.data.box.UR.y - spacing - span_height) / cell.rowspan;
+      for (size_t j = 0; j < cell.rowspan; ++j) {
+        table->heights[cell.row + j] += heighten_by;
+      }
+    }
+  }
+
+  for (htmlcell_t **i = table->cells; *i != NULL; ++i) {
+    htmlcell_t *cell = *i;
+
+    double min_height = 0;
+    assert(cell->row + cell->rowspan <= table->row_count &&
+           "cell spans higher than containing table");
+    for (size_t j = 0; j < cell->rowspan; ++j) {
+      min_height += table->heights[cell->row + j];
+    }
+
+    const double spacing = (cell->rowspan - 1) * table->data.space;
+    cell->data.box.UR.y = fmax(cell->data.box.UR.y, min_height + spacing);
+  }
 }
 
-/* closeGraphs:
- * Clean up graphs made for setting column and row widths.
- */
-static void closeGraphs(graph_t * rowg, graph_t * colg)
-{
-    node_t *n;
-    for (n = GD_nlist(colg); n; n = ND_next(n)) {
-	free_list(ND_in(n));
-	free_list(ND_out(n));
-    }
+static void pos_html_tbl(htmltbl_t *, boxf, unsigned char);
 
-    agclose(rowg);
-    agclose(colg);
-}
-
-/* checkChain:
- * For each pair of nodes in the node list, add an edge if none exists.
- * Assumes node list has nodes ordered correctly.
- */
-static void checkChain(graph_t * g)
-{
-    node_t *t;
-    node_t *h;
-    edge_t *e;
-    t = GD_nlist(g);
-    for (h = ND_next(t); h; h = ND_next(h)) {
-	if (!agfindedge(g, t, h)) {
-	    e = agedge(g, t, h, NULL, 1);
-	    agbindrec(e, "Agedgeinfo_t", sizeof(Agedgeinfo_t), TRUE);
-	    ED_minlen(e) = 0;
-	    elist_append(e, ND_out(t));
-	    elist_append(e, ND_in(h));
-	}
-	t = h;
-    }
-}
-
-/* checkEdge:
- * Check for edge in g. If it exists, set its minlen to max of sz and
- * current minlen. Else, create it and set minlen to sz.
- */
-static void
-checkEdge (graph_t* g, node_t* t, node_t* h, int sz)
-{
-    edge_t* e;
-
-    e = agfindedge (g, t, h);
-    if (e)
-	ED_minlen(e) = MAX(ED_minlen(e), sz);
-    else {
-	e = agedge(g, t, h, NULL, 1);
-	agbindrec(e, "Agedgeinfo_t", sizeof(Agedgeinfo_t), TRUE);
-	ED_minlen(e) = sz;
-	elist_append(e, ND_out(t));
-	elist_append(e, ND_in(h));
-    }
-}
-
-/* makeGraphs:
- * Generate dags modeling the row and column constraints.
- * If the table has cc columns, we create the graph
- *  0 -> 1 -> 2 -> ... -> cc
- * and if a cell starts in column c with span cspan, with
- * width w, we add the edge c -> c+cspan [minlen = w].
- * Ditto for rows.
- *
- */
-void makeGraphs(htmltbl_t * tbl, graph_t * rowg, graph_t * colg)
-{
-    htmlcell_t *cp;
-    htmlcell_t **cells;
-    node_t *t;
-    node_t *lastn;
-    node_t *h;
-    int i;
-
-    lastn = NULL;
-    for (i = 0; i <= tbl->cc; i++) {
-	t = agnode(colg, nToName(i), 1);
-	agbindrec(t, "Agnodeinfo_t", sizeof(Agnodeinfo_t), TRUE);
-	alloc_elist(tbl->rc, ND_in(t));
-	alloc_elist(tbl->rc, ND_out(t));
-	if (lastn) {
-	    ND_next(lastn) = t;
-	    lastn = t;
-	} else {
-	    lastn = GD_nlist(colg) = t;
-	}
-    }
-    lastn = NULL;
-    for (i = 0; i <= tbl->rc; i++) {
-	t = agnode(rowg, nToName(i), 1);
-	agbindrec(t, "Agnodeinfo_t", sizeof(Agnodeinfo_t), TRUE);
-	alloc_elist(tbl->cc, ND_in(t));
-	alloc_elist(tbl->cc, ND_out(t));
-	if (lastn) {
-	    ND_next(lastn) = t;
-	    lastn = t;
-	} else {
-	    lastn = GD_nlist(rowg) = t;
-	}
-    }
-
-    for (cells = tbl->u.n.cells; *cells; cells++) {
-	cp = *cells;
-	t = agfindnode(colg, nToName(cp->col));
-	h = agfindnode(colg, nToName(cp->col + cp->cspan));
-	checkEdge (colg, t, h, cp->data.box.UR.x);
-
-	t = agfindnode(rowg, nToName(cp->row));
-	h = agfindnode(rowg, nToName(cp->row + cp->rspan));
-	checkEdge (rowg, t, h, cp->data.box.UR.y);
-    }
-
-    /* Make sure that 0 <= 1 <= 2 ...k. This implies graph connected. */
-    checkChain(colg);
-    checkChain(rowg);
-}
-
-/* setSizes:
- * Use rankings to determine cell dimensions. The rank values
- * give the coordinate, so to get the width/height, we have
- * to subtract the previous value.
- */
-void setSizes(htmltbl_t * tbl, graph_t * rowg, graph_t * colg)
-{
-    int i;
-    node_t *n;
-    int prev;
-
-    prev = 0;
-    n = GD_nlist(rowg);
-    for (i = 0, n = ND_next(n); n; i++, n = ND_next(n)) {
-	tbl->heights[i] = ND_rank(n) - prev;
-	prev = ND_rank(n);
-    }
-    prev = 0;
-    n = GD_nlist(colg);
-    for (i = 0, n = ND_next(n); n; i++, n = ND_next(n)) {
-	tbl->widths[i] = ND_rank(n) - prev;
-	prev = ND_rank(n);
-    }
-
-}
-
-/* sizeArray:
- * Set column and row sizes. Optimize for minimum width and
- * height. Where there is slack, try to distribute evenly.
- * We do this by encoding cells as edges with min length is
- * a dag on a chain. We then run network simplex, using
- * LR_balance.
- */
-void sizeArray(htmltbl_t * tbl)
-{
-    graph_t *rowg;
-    graph_t *colg;
-#ifdef _WIN32
-    Agdesc_t dir = { 1, 1, 0, 1 };
-#else
-    Agdesc_t dir = Agstrictdirected;
-#endif
-
-    /* Do the 1D cases by hand */
-    if ((tbl->rc == 1) || (tbl->cc == 1)) {
-	sizeLinearArray(tbl);
-	return;
-    }
-
-    tbl->heights = N_NEW(tbl->rc + 1, int);
-    tbl->widths = N_NEW(tbl->cc + 1, int);
-
-    rowg = agopen("rowg", dir, NIL(Agdisc_t *));
-    colg = agopen("colg", dir, NIL(Agdisc_t *));
-    /* Only need GD_nlist */
-    agbindrec(rowg, "Agraphinfo_t", sizeof(Agraphinfo_t), TRUE);	// graph custom data
-    agbindrec(colg, "Agraphinfo_t", sizeof(Agraphinfo_t), TRUE);	// graph custom data
-    makeGraphs(tbl, rowg, colg);
-    rank(rowg, 2, INT_MAX);
-    rank(colg, 2, INT_MAX);
-    setSizes(tbl, rowg, colg);
-    closeGraphs(rowg, colg);
-}
-
-static void pos_html_tbl(htmltbl_t *, boxf, int);	/* forward declaration */
-
-/* pos_html_img:
- * Place image in cell
+/* Place image in cell
  * storing allowed space handed by parent cell.
  * How this space is used is handled in emit_html_img.
  */
@@ -1581,34 +1382,27 @@ static void pos_html_img(htmlimg_t * cp, boxf pos)
     cp->box = pos;
 }
 
-/* pos_html_txt:
- * Set default alignment.
- */
+/// Set default alignment.
 static void pos_html_txt(htmltxt_t * ftxt, char c)
 {
-    int i;
-
-    for (i = 0; i < ftxt->nspans; i++) {
+    for (size_t i = 0; i < ftxt->nspans; i++) {
 	if (ftxt->spans[i].just == UNSET_ALIGN)	/* unset */
 	    ftxt->spans[i].just = c;
     }
 }
 
-/* pos_html_cell:
- */
-static void pos_html_cell(htmlcell_t * cp, boxf pos, int sides)
-{
+static void pos_html_cell(htmlcell_t *cp, boxf pos, unsigned char sides) {
     double delx, dely;
     pointf oldsz;
     boxf cbox;
 
     if (!cp->data.pencolor && cp->parent->data.pencolor)
-	cp->data.pencolor = strdup(cp->parent->data.pencolor);
+	cp->data.pencolor = gv_strdup(cp->parent->data.pencolor);
 
     /* If fixed, align cell */
     if (cp->data.flags & FIXED_FLAG) {
 	oldsz = cp->data.box.UR;
-	delx = (pos.UR.x - pos.LL.x) - oldsz.x;
+	delx = pos.UR.x - pos.LL.x - oldsz.x;
 	if (delx > 0) {
 	    switch (cp->data.flags & HALIGN_MASK) {
 	    case HALIGN_LEFT:
@@ -1624,7 +1418,7 @@ static void pos_html_cell(htmlcell_t * cp, boxf pos, int sides)
 		break;
 	    }
 	}
-	dely = (pos.UR.y - pos.LL.y) - oldsz.y;
+	dely = pos.UR.y - pos.LL.y - oldsz.y;
 	if (dely > 0) {
 	    switch (cp->data.flags & VALIGN_MASK) {
 	    case VALIGN_BOTTOM:
@@ -1655,7 +1449,7 @@ static void pos_html_cell(htmlcell_t * cp, boxf pos, int sides)
     } else if (cp->child.kind == HTML_IMAGE) {
 	/* Note that alignment trumps scaling */
 	oldsz = cp->child.u.img->box.UR;
-	delx = (cbox.UR.x - cbox.LL.x) - oldsz.x;
+	delx = cbox.UR.x - cbox.LL.x - oldsz.x;
 	if (delx > 0) {
 	    switch (cp->data.flags & HALIGN_MASK) {
 	    case HALIGN_LEFT:
@@ -1664,10 +1458,12 @@ static void pos_html_cell(htmlcell_t * cp, boxf pos, int sides)
 	    case HALIGN_RIGHT:
 		cbox.LL.x += delx;
 		break;
+	    default:
+		break;
 	    }
 	}
 
-	dely = (cbox.UR.y - cbox.LL.y) - oldsz.y;
+	dely = cbox.UR.y - cbox.LL.y - oldsz.y;
 	if (dely > 0) {
 	    switch (cp->data.flags & VALIGN_MASK) {
 	    case VALIGN_BOTTOM:
@@ -1675,6 +1471,8 @@ static void pos_html_cell(htmlcell_t * cp, boxf pos, int sides)
 		break;
 	    case VALIGN_TOP:
 		cbox.LL.y += dely;
+		break;
+	    default:
 		break;
 	    }
 	}
@@ -1684,12 +1482,11 @@ static void pos_html_cell(htmlcell_t * cp, boxf pos, int sides)
 	int af;
 
 	oldsz = cp->child.u.txt->box.UR;
-	delx = (cbox.UR.x - cbox.LL.x) - oldsz.x;
+	delx = cbox.UR.x - cbox.LL.x - oldsz.x;
 	/* If the cell is larger than the text block and alignment is 
 	 * done at textblock level, the text box is shrunk accordingly. 
 	 */
-	if ((delx > 0)
-	    && ((af = (cp->data.flags & HALIGN_MASK)) != HALIGN_TEXT)) {
+	if (delx > 0 && (af = (cp->data.flags & HALIGN_MASK)) != HALIGN_TEXT) {
 	    switch (af) {
 	    case HALIGN_LEFT:
 		cbox.UR.x -= delx;
@@ -1704,7 +1501,7 @@ static void pos_html_cell(htmlcell_t * cp, boxf pos, int sides)
 	    }
 	}
 
-	dely = (cbox.UR.y - cbox.LL.y) - oldsz.y;
+	dely = cbox.UR.y - cbox.LL.y - oldsz.y;
 	if (dely > 0) {
 	    switch (cp->data.flags & VALIGN_MASK) {
 	    case VALIGN_BOTTOM:
@@ -1738,30 +1535,24 @@ static void pos_html_cell(htmlcell_t * cp, boxf pos, int sides)
     }
 }
 
-/* pos_html_tbl:
- * Position table given its box, then calculate
+/* Position table given its box, then calculate
  * the position of each cell. In addition, set the sides
  * attribute indicating which external sides of the node
  * are accessible to the table.
  */
-static void pos_html_tbl(htmltbl_t * tbl, boxf pos, int sides)
-{
-    int x, y, delx, dely, oldsz;
-    int i, extra, plus;
-    htmlcell_t **cells = tbl->u.n.cells;
+static void pos_html_tbl(htmltbl_t *tbl, boxf pos, unsigned char sides) {
+    int plus;
+    htmlcell_t **cells = tbl->cells;
     htmlcell_t *cp;
     boxf cbox;
 
-    if (tbl->u.n.parent && tbl->u.n.parent->data.pencolor
-	&& !tbl->data.pencolor)
-	tbl->data.pencolor = strdup(tbl->u.n.parent->data.pencolor);
+    if (tbl->parent && tbl->parent->data.pencolor && !tbl->data.pencolor)
+	tbl->data.pencolor = gv_strdup(tbl->parent->data.pencolor);
 
-    oldsz = tbl->data.box.UR.x;
-    delx = (pos.UR.x - pos.LL.x) - oldsz;
-    assert(delx >= 0);
+    double oldsz = tbl->data.box.UR.x;
+    double delx = fmax(pos.UR.x - pos.LL.x - oldsz, 0);
     oldsz = tbl->data.box.UR.y;
-    dely = (pos.UR.y - pos.LL.y) - oldsz;
-    assert(dely >= 0);
+    double dely = fmax(pos.UR.y - pos.LL.y - oldsz, 0);
 
     /* If fixed, align box */
     if (tbl->data.flags & FIXED_FLAG) {
@@ -1800,39 +1591,41 @@ static void pos_html_tbl(htmltbl_t * tbl, boxf pos, int sides)
     }
 
     /* change sizes to start positions and distribute extra space */
-    x = pos.LL.x + tbl->data.border + tbl->data.space;
-    extra = delx / (tbl->cc);
-    plus = ROUND(delx - extra * (tbl->cc));
-    for (i = 0; i <= tbl->cc; i++) {
-	delx = tbl->widths[i] + extra + (i < plus ? 1 : 0);
+    double x = pos.LL.x + tbl->data.border + tbl->data.space;
+    assert(tbl->column_count <= DBL_MAX);
+    double extra = delx / (double)tbl->column_count;
+    plus = ROUND(delx - extra * (double)tbl->column_count);
+    for (size_t i = 0; i <= tbl->column_count; i++) {
+	delx = tbl->widths[i] + extra + ((i <= INT_MAX && (int)i < plus) ? 1 : 0);
 	tbl->widths[i] = x;
 	x += delx + tbl->data.space;
     }
-    y = pos.UR.y - tbl->data.border - tbl->data.space;
-    extra = dely / (tbl->rc);
-    plus = ROUND(dely - extra * (tbl->rc));
-    for (i = 0; i <= tbl->rc; i++) {
-	dely = tbl->heights[i] + extra + (i < plus ? 1 : 0);
+    double y = pos.UR.y - tbl->data.border - tbl->data.space;
+    assert(tbl->row_count <= DBL_MAX);
+    extra = dely / (double)tbl->row_count;
+    plus = ROUND(dely - extra * (double)tbl->row_count);
+    for (size_t i = 0; i <= tbl->row_count; i++) {
+	dely = tbl->heights[i] + extra + ((i <= INT_MAX && (int)i < plus) ? 1 : 0);
 	tbl->heights[i] = y;
 	y -= dely + tbl->data.space;
     }
 
     while ((cp = *cells++)) {
-	int mask = 0;
+	unsigned char mask = 0;
 	if (sides) {
 	    if (cp->col == 0)
 		mask |= LEFT;
 	    if (cp->row == 0)
 		mask |= TOP;
-	    if (cp->col + cp->cspan == tbl->cc)
+	    if (cp->col + cp->colspan == tbl->column_count)
 		mask |= RIGHT;
-	    if (cp->row + cp->rspan == tbl->rc)
+	    if (cp->row + cp->rowspan == tbl->row_count)
 		mask |= BOTTOM;
 	}
 	cbox.LL.x = tbl->widths[cp->col];
-	cbox.UR.x = tbl->widths[cp->col + cp->cspan] - tbl->data.space;
+	cbox.UR.x = tbl->widths[cp->col + cp->colspan] - tbl->data.space;
 	cbox.UR.y = tbl->heights[cp->row];
-	cbox.LL.y = tbl->heights[cp->row + cp->rspan] + tbl->data.space;
+	cbox.LL.y = tbl->heights[cp->row + cp->rowspan] + tbl->data.space;
 	pos_html_cell(cp, cbox, sides & mask);
     }
 
@@ -1840,21 +1633,19 @@ static void pos_html_tbl(htmltbl_t * tbl, boxf pos, int sides)
     tbl->data.box = pos;
 }
 
-/* size_html_tbl:
- * Determine the size of a table by first determining the
+/* Determine the size of a table by first determining the
  * size of each cell.
  */
 static int
 size_html_tbl(graph_t * g, htmltbl_t * tbl, htmlcell_t * parent,
 	      htmlenv_t * env)
 {
-    int i, wd, ht;
     int rv = 0;
     static textfont_t savef;
 
     if (tbl->font)
 	pushFontInfo(env, tbl->font, &savef);
-    tbl->u.n.parent = parent;
+    tbl->parent = parent;
     rv = processTbl(g, tbl, env);
 
     /* Set up border and spacing */
@@ -1865,30 +1656,34 @@ size_html_tbl(graph_t * g, htmltbl_t * tbl, htmlcell_t * parent,
 	tbl->data.border = DEFAULT_BORDER;
     }
 
-    sizeArray(tbl);
+    set_cell_widths(tbl);
+    set_cell_heights(tbl);
 
-    wd = (tbl->cc + 1) * tbl->data.space + 2 * tbl->data.border;
-    ht = (tbl->rc + 1) * tbl->data.space + 2 * tbl->data.border;
-    for (i = 0; i < tbl->cc; i++)
+    assert(tbl->column_count <= DBL_MAX);
+    double wd = ((double)tbl->column_count + 1) * tbl->data.space + 2 * tbl->data.border;
+    assert(tbl->row_count <= DBL_MAX);
+    double ht = ((double)tbl->row_count + 1) * tbl->data.space + 2 * tbl->data.border;
+    for (size_t i = 0; i < tbl->column_count; i++)
 	wd += tbl->widths[i];
-    for (i = 0; i < tbl->rc; i++)
+    for (size_t i = 0; i < tbl->row_count; i++)
 	ht += tbl->heights[i];
 
     if (tbl->data.flags & FIXED_FLAG) {
 	if (tbl->data.width && tbl->data.height) {
-	    if ((tbl->data.width < wd) || (tbl->data.height < ht)) {
-		agerr(AGWARN, "table size too small for content\n");
+	    if (tbl->data.width < wd || tbl->data.height < ht) {
+		agwarningf("table size too small for content\n");
 		rv = 1;
 	    }
-	    wd = ht = 0;
+	    wd = 0;
+	    ht = 0;
 	} else {
-	    agerr(AGWARN,
+	    agwarningf(
 		  "fixed table size with unspecified width or height\n");
 	    rv = 1;
 	}
     }
-    tbl->data.box.UR.x = MAX(wd, tbl->data.width);
-    tbl->data.box.UR.y = MAX(ht, tbl->data.height);
+    tbl->data.box.UR.x = fmax(wd, tbl->data.width);
+    tbl->data.box.UR.y = fmax(ht, tbl->data.height);
 
     if (tbl->font)
 	popFontInfo(env, &savef);
@@ -1900,13 +1695,13 @@ static char *nameOf(void *obj, agxbuf * xb)
     Agedge_t *ep;
     switch (agobjkind(obj)) {
     case AGRAPH:
-	agxbput(xb, agnameof(((Agraph_t *) obj)));
+	agxbput(xb, agnameof(obj));
 	break;
     case AGNODE:
-	agxbput(xb, agnameof(((Agnode_t *) obj)));
+	agxbput(xb, agnameof(obj));
 	break;
     case AGEDGE:
-	ep = (Agedge_t *) obj;
+	ep = obj;
 	agxbput(xb, agnameof(agtail(ep)));
 	agxbput(xb, agnameof(aghead(ep)));
 	if (agisdirected(agraphof(aghead(ep))))
@@ -1938,16 +1733,15 @@ void printImage(htmlimg_t * ip, int ind)
 
 void printTxt(htmltxt_t * txt, int ind)
 {
-    int i, j;
-
     indent(ind);
-    fprintf(stderr, "txt spans = %d \n", txt->nspans);
-    for (i = 0; i < txt->nspans; i++) {
+    fprintf(stderr, "txt spans = %" PRISIZE_T " \n", txt->nspans);
+    for (size_t i = 0; i < txt->nspans; i++) {
 	indent(ind + 1);
-	fprintf(stderr, "[%d] %d items\n", i, txt->spans[i].nitems);
-	for (j = 0; j < txt->spans[i].nitems; j++) {
+	fprintf(stderr, "[%" PRISIZE_T "] %" PRISIZE_T " items\n", i,
+	        txt->spans[i].nitems);
+	for (size_t j = 0; j < txt->spans[i].nitems; j++) {
 	    indent(ind + 2);
-	    fprintf(stderr, "[%d] (%f,%f) \"%s\" ",
+	    fprintf(stderr, "[%" PRISIZE_T "] (%f,%f) \"%s\" ",
 		    j, txt->spans[i].items[j].size.x,
             txt->spans[i].items[j].size.y,
 		    txt->spans[i].items[j].str);
@@ -1999,9 +1793,9 @@ void printData(htmldata_t * dp)
 
 void printTbl(htmltbl_t * tbl, int ind)
 {
-    htmlcell_t **cells = tbl->u.n.cells;
+    htmlcell_t **cells = tbl->cells;
     indent(ind);
-    fprintf(stderr, "tbl (%p) %d %d ", tbl, tbl->cc, tbl->rc);
+    fprintf(stderr, "tbl (%p) %" PRISIZE_T " %" PRISIZE_T " ", tbl, tbl->column_count, tbl->row_count);
     printData(&tbl->data);
     fputs("\n", stderr);
     while (*cells)
@@ -2011,8 +1805,8 @@ void printTbl(htmltbl_t * tbl, int ind)
 static void printCell(htmlcell_t * cp, int ind)
 {
     indent(ind);
-    fprintf(stderr, "cell %d %d %d %d ", cp->cspan, cp->rspan, cp->col,
-	    cp->row);
+    fprintf(stderr, "cell %" PRIu16 " %" PRIu16 " %" PRIu16 " %" PRIu16 " ", cp->colspan,
+            cp->colspan, cp->rowspan, cp->col, cp->row);
     printData(&cp->data);
     fputs("\n", stderr);
     switch (cp->child.kind) {
@@ -2043,22 +1837,19 @@ static char *getPenColor(void *obj)
 {
     char *str;
 
-    if (((str = agget(obj, "pencolor")) != 0) && str[0])
+    if ((str = agget(obj, "pencolor")) != 0 && str[0])
 	return str;
-    else if (((str = agget(obj, "color")) != 0) && str[0])
+    else if ((str = agget(obj, "color")) != 0 && str[0])
 	return str;
     else
 	return NULL;
 }
 
-/* make_html_label:
- * Return non-zero if problem parsing HTML. In this case, use object name.
- */
+/// Return non-zero if problem parsing HTML. In this case, use object name.
 int make_html_label(void *obj, textlabel_t * lp)
 {
     int rv;
     double wd2, ht2;
-    boxf box;
     graph_t *g;
     htmllabel_t *lbl;
     htmlenv_t env;
@@ -2070,7 +1861,7 @@ int make_html_label(void *obj, textlabel_t * lp)
 	env.g = ((Agraph_t *) obj)->root;
 	break;
     case AGNODE:
-	env.g = agraphof(((Agnode_t *) obj));
+	env.g = agraphof(obj);
 	break;
     case AGEDGE:
 	env.g = agraphof(aghead(((Agedge_t *) obj)));
@@ -2084,12 +1875,16 @@ int make_html_label(void *obj, textlabel_t * lp)
     env.finfo.flags = 0;
     lbl = parseHTML(lp->text, &rv, &env);
     if (!lbl) {
+	if (rv == 3) {
+	    // fatal error; `parseHTML` will have printed detail of it
+	    lp->html = false;
+	    lp->text = gv_strdup(lp->text);
+	    return rv;
+	}
 	/* Parse of label failed; revert to simple text label */
-	agxbuf xb;
-	unsigned char buf[SMALLBUF];
-	agxbinit(&xb, SMALLBUF, buf);
-	lp->html = FALSE;
-	lp->text = strdup(nameOf(obj, &xb));
+	agxbuf xb = {0};
+	lp->html = false;
+	lp->text = gv_strdup(nameOf(obj, &xb));
 	switch (lp->charset) {
 	case CHAR_LATIN1:
 	    s = latin1ToUTF8(lp->text);
@@ -2107,22 +1902,22 @@ int make_html_label(void *obj, textlabel_t * lp)
 
     if (lbl->kind == HTML_TBL) {
 	if (!lbl->u.tbl->data.pencolor && getPenColor(obj))
-	    lbl->u.tbl->data.pencolor = strdup(getPenColor(obj));
+	    lbl->u.tbl->data.pencolor = gv_strdup(getPenColor(obj));
 	rv |= size_html_tbl(g, lbl->u.tbl, NULL, &env);
-	wd2 = (lbl->u.tbl->data.box.UR.x) / 2;
-	ht2 = (lbl->u.tbl->data.box.UR.y) / 2;
-	box = boxfof(-wd2, -ht2, wd2, ht2);
-	pos_html_tbl(lbl->u.tbl, box, BOTTOM | RIGHT | TOP | LEFT);
-	lp->dimen.x = box.UR.x - box.LL.x;
-	lp->dimen.y = box.UR.y - box.LL.y;
+	wd2 = lbl->u.tbl->data.box.UR.x / 2;
+	ht2 = lbl->u.tbl->data.box.UR.y / 2;
+	boxf b = {{-wd2, -ht2}, {wd2, ht2}};
+	pos_html_tbl(lbl->u.tbl, b, BOTTOM | RIGHT | TOP | LEFT);
+	lp->dimen.x = b.UR.x - b.LL.x;
+	lp->dimen.y = b.UR.y - b.LL.y;
     } else {
 	rv |= size_html_txt(GD_gvc(g), lbl->u.txt, &env);
 	wd2 = lbl->u.txt->box.UR.x  / 2;
 	ht2 = lbl->u.txt->box.UR.y  / 2;
-	box = boxfof(-wd2, -ht2, wd2, ht2);
-	lbl->u.txt->box = box;
-	lp->dimen.x = box.UR.x - box.LL.x;
-	lp->dimen.y = box.UR.y - box.LL.y;
+	boxf b = {{-wd2, -ht2}, {wd2, ht2}};
+	lbl->u.txt->box = b;
+	lp->dimen.x = b.UR.x - b.LL.x;
+	lp->dimen.y = b.UR.y - b.LL.y;
     }
 
     lp->u.html = lbl;
@@ -2132,7 +1927,7 @@ int make_html_label(void *obj, textlabel_t * lp)
      */
     if (lbl->kind == HTML_TBL) {
 	free(lp->text);
-	lp->text = strdup("<TABLE>");
+	lp->text = gv_strdup("<TABLE>");
     }
 
     return rv;

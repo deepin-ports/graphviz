@@ -1,40 +1,43 @@
-/* $Id$ $Revision$ */
-/* vim:set shiftwidth=4 ts=8: */
-
 /*************************************************************************
  * Copyright (c) 2011 AT&T Intellectual Property
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
- * http://www.eclipse.org/legal/epl-v10.html
+ * https://www.eclipse.org/legal/epl-v10.html
  *
- * Contributors: See CVS logs. Details at http://www.graphviz.org/
+ * Contributors: Details at https://graphviz.org
  *************************************************************************/
 
 #include "config.h"
 
+#include <assert.h>
+#include <errno.h>
+#include <limits.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-#include "const.h"
-#include "gvplugin_render.h"
-#include "agxbuf.h"
-#include "utils.h"
-#include "gvplugin_device.h"
-#include "gvio.h"
+#include <time.h>
+#include <common/const.h>
+#include <gvc/gvplugin_render.h>
+#include <common/utils.h>
+#include <gvc/gvplugin_device.h>
+#include <gvc/gvio.h>
+#include <math.h>
+#include <util/agxbuf.h>
+#include <util/gv_math.h>
 
 #include "gvplugin_pango.h"
 
 #include <pango/pangocairo.h>
 
-typedef enum {
+enum {
 		FORMAT_CAIRO,
 		FORMAT_PNG,
 		FORMAT_PS,
 		FORMAT_PDF,
 		FORMAT_SVG,
 		FORMAT_EPS,
-    } format_type;
+};
 
 #define ARRAY_SIZE(A) (sizeof(A)/sizeof(A[0]))
 
@@ -56,7 +59,7 @@ static int dotted_len = ARRAY_SIZE(dotted);
 #include <cairo-svg.h>
 #endif
 
-static void cairogen_polyline(GVJ_t * job, pointf * A, int n);
+static void cairogen_polyline(GVJ_t *job, pointf *A, size_t n);
 
 static void cairogen_set_color(cairo_t * cr, gvcolor_t * color)
 {
@@ -74,7 +77,7 @@ static void cairogen_add_color_stop_rgba(cairo_pattern_t *pat, double stop , gvc
 static cairo_status_t
 writer (void *closure, const unsigned char *data, unsigned int length)
 {
-    if (length == gvwrite((GVJ_t *)closure, (const char*)data, length))
+    if (length == gvwrite(closure, (const char*)data, length))
 	return CAIRO_STATUS_SUCCESS;
     return CAIRO_STATUS_WRITE_ERROR;
 }
@@ -82,12 +85,12 @@ writer (void *closure, const unsigned char *data, unsigned int length)
 static void cairogen_begin_job(GVJ_t * job)
 {
     if (job->external_context && job->context)
-        cairo_save((cairo_t *) job->context);
+        cairo_save(job->context);
 }
 
 static void cairogen_end_job(GVJ_t * job)
 {
-    cairo_t *cr = (cairo_t *) job->context;
+    cairo_t *cr = job->context;
 
     if (job->external_context)
         cairo_restore(cr);
@@ -97,12 +100,12 @@ static void cairogen_end_job(GVJ_t * job)
     }
 }
 
-#define CAIRO_XMAX 32767
-#define CAIRO_YMAX 32767
+static const double CAIRO_XMAX = 32767;
+static const double CAIRO_YMAX = 32767;
 
 static void cairogen_begin_page(GVJ_t * job)
 {
-    cairo_t *cr = (cairo_t *) job->context;
+    cairo_t *cr = job->context;
     cairo_surface_t *surface;
     cairo_status_t status;
 
@@ -121,6 +124,44 @@ static void cairogen_begin_page(GVJ_t * job)
 #ifdef CAIRO_HAS_PDF_SURFACE
 	    surface = cairo_pdf_surface_create_for_stream (writer,
 			job, job->width, job->height);
+
+	    {
+                const char *source_date_epoch = getenv("SOURCE_DATE_EPOCH");
+                if (source_date_epoch != NULL) {
+                    char *end = NULL;
+                    errno = 0;
+                    long epoch = strtol(source_date_epoch, &end, 10);
+                    // from https://reproducible-builds.org/specs/source-date-epoch/
+                    //
+                    //   If the value is malformed, the build process SHOULD
+                    //   exit with a non-zero error code.
+                    if ((epoch == LONG_MAX && errno != 0) || epoch < 0
+                        || *end != '\0') {
+                        fprintf(stderr,
+                                "malformed value %s for $SOURCE_DATE_EPOCH\n",
+                                source_date_epoch);
+                        exit(EXIT_FAILURE);
+                    }
+                    time_t tepoch = (time_t)epoch;
+                    struct tm *tm = gmtime(&tepoch);
+                    if (tm == NULL) {
+                        fprintf(stderr,
+                                "malformed value %s for $SOURCE_DATE_EPOCH\n",
+                                source_date_epoch);
+                        exit(EXIT_FAILURE);
+                    }
+#if CAIRO_VERSION >= CAIRO_VERSION_ENCODE(1, 16, 0)
+                    char iso8601[sizeof("YYYY-MM-DDThh:mm:ss")] = {0};
+                    (void)strftime(iso8601, sizeof(iso8601), "%Y-%m-%dT%H:%M:%SZ", tm);
+                    cairo_pdf_surface_set_metadata(surface,
+                                                   CAIRO_PDF_METADATA_CREATE_DATE,
+                                                   iso8601);
+                    cairo_pdf_surface_set_metadata(surface,
+                                                   CAIRO_PDF_METADATA_MOD_DATE,
+                                                   iso8601);
+#endif
+                }
+	    }
 #endif
 	    break;
         case FORMAT_SVG:
@@ -133,23 +174,26 @@ static void cairogen_begin_page(GVJ_t * job)
         case FORMAT_PNG:
         default:
 	    if (job->width >= CAIRO_XMAX || job->height >= CAIRO_YMAX) {
-		double scale = MIN((double)CAIRO_XMAX / job->width,
-			(double)CAIRO_YMAX / job->height);
-		job->width *= scale;
-		job->height *= scale;
+		double scale = fmin(CAIRO_XMAX / job->width, CAIRO_YMAX / job->height);
+		assert(job->width * scale <= UINT_MAX);
+		job->width = (unsigned)(job->width * scale);
+		assert(job->height * scale <= UINT_MAX);
+		job->height = (unsigned)(job->height * scale);
 		job->scale.x *= scale;
 		job->scale.y *= scale;
                 fprintf(stderr,
                         "%s: graph is too large for cairo-renderer bitmaps. Scaling by %g to fit\n",
                         job->common->cmdname, scale);
 	    }
-	    surface = cairo_image_surface_create (CAIRO_FORMAT_ARGB32,
-			job->width, job->height);
+	    assert(job->width <= INT_MAX);
+	    assert(job->height <= INT_MAX);
+	    surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32,
+	                                         (int)job->width, (int)job->height);
             if (job->common->verbose)
                 fprintf(stderr,
-                        "%s: allocating a %dK cairo image surface (%d x %d pixels)\n",
+                        "%s: allocating a %.0fK cairo image surface (%d x %d pixels)\n",
                         job->common->cmdname,
-			ROUND(job->width * job->height * 4 / 1024.),
+			round(job->width * job->height * BYTES_PER_PIXEL / 1024.),
 			job->width, job->height);
 	    break;
         }
@@ -163,7 +207,7 @@ static void cairogen_begin_page(GVJ_t * job)
 	}
         cr = cairo_create(surface);
         cairo_surface_destroy (surface);
-        job->context = (void *) cr;
+        job->context = cr;
     }
 
     cairo_scale(cr, job->scale.x, job->scale.y);
@@ -173,12 +217,11 @@ static void cairogen_begin_page(GVJ_t * job)
     cairo_rectangle(cr, job->clip.LL.x, - job->clip.LL.y,
 	    job->clip.UR.x - job->clip.LL.x, - (job->clip.UR.y - job->clip.LL.y));
     cairo_clip(cr);
-    /* cairo_set_line_join(cr, CAIRO_LINE_JOIN_ROUND); */
 }
 
 static void cairogen_end_page(GVJ_t * job)
 {
-    cairo_t *cr = (cairo_t *) job->context;
+    cairo_t *cr = job->context;
     cairo_surface_t *surface;
     cairo_status_t status;
 
@@ -212,7 +255,7 @@ static void cairogen_end_page(GVJ_t * job)
 	    fprintf(stderr, "ERROR: cairo surface has zero area, this may indicate some problem during rendering shapes.\n");
  - jce */
 	}
-	job->imagedata = (char *)(cairo_image_surface_get_data(surface));
+	job->imagedata = cairo_image_surface_get_data(surface);
 	break;
        	/* formatting will be done by gvdevice_format() */
     }
@@ -221,10 +264,13 @@ static void cairogen_end_page(GVJ_t * job)
 static void cairogen_begin_anchor(GVJ_t *job, char *url, char *tooltip, char *target, char *id)
 {
     obj_state_t *obj = job->obj;
-    cairo_t *cr = (cairo_t *) job->context;
+    cairo_t *cr = job->context;
     double p0x, p0y, p1x, p1y;
-    char *buf;
-    size_t buf_len;
+
+    // suppress unused parameter warnings
+    (void)tooltip;
+    (void)target;
+    (void)id;
 
     if (url && obj->url_map_p) {
        p0x = obj->url_map_p[0].x;
@@ -233,30 +279,25 @@ static void cairogen_begin_anchor(GVJ_t *job, char *url, char *tooltip, char *ta
        p1x = obj->url_map_p[1].x;
        p1y = -obj->url_map_p[1].y;
        cairo_user_to_device (cr, &p1x, &p1y);
-       buf_len = strlen(url) + 200;
-       buf = malloc(buf_len);
-       snprintf(buf, buf_len, "rect=[%f %f %f %f] uri='%s'",
-                p0x,
-                p0y,
-                p1x - p0x,
-                p1y - p0y,
-                url);
+       agxbuf buf = {0};
+       agxbprint(&buf, "rect=[%f %f %f %f] uri='%s'", p0x, p0y, p1x - p0x,
+                 p1y - p0y, url);
 #if CAIRO_VERSION >= CAIRO_VERSION_ENCODE(1, 16, 0)
-       cairo_tag_begin (cr, CAIRO_TAG_LINK, buf);
+       cairo_tag_begin(cr, CAIRO_TAG_LINK, agxbuse(&buf));
        cairo_tag_end (cr, CAIRO_TAG_LINK);
 #endif
-       free(buf);
+       agxbfree(&buf);
     }
 }
 
 static void cairogen_textspan(GVJ_t * job, pointf p, textspan_t * span)
 {
     obj_state_t *obj = job->obj;
-    cairo_t *cr = (cairo_t *) job->context;
+    cairo_t *cr = job->context;
     pointf A[2];
 
     cairo_set_dash (cr, dashed, 0, 0.0);  /* clear any dashing */
-    cairogen_set_color(cr, &(obj->pencolor));
+    cairogen_set_color(cr, &obj->pencolor);
 
     switch (span->just) {
     case 'r':
@@ -275,10 +316,10 @@ static void cairogen_textspan(GVJ_t * job, pointf p, textspan_t * span)
     cairo_move_to (cr, p.x, -p.y);
     cairo_save(cr);
     cairo_scale(cr, POINTS_PER_INCH / FONT_DPI, POINTS_PER_INCH / FONT_DPI);
-    pango_cairo_show_layout(cr, (PangoLayout*)(span->layout));
+    pango_cairo_show_layout(cr, (PangoLayout*)span->layout);
     cairo_restore(cr);
 
-    if ((span->font) && (span->font->flags & HTML_OL)) {
+    if (span->font && (span->font->flags & HTML_OL)) {
 	A[0].x = p.x;
 	A[1].x = p.x + span->size.x;
 	A[1].y = A[0].y = p.y;
@@ -298,14 +339,12 @@ static void cairogen_set_penstyle(GVJ_t *job, cairo_t *cr)
 	cairo_set_dash (cr, dashed, 0, 0.0);
     }
     cairo_set_line_width (cr, obj->penwidth);
-
 }
 
-static void cairo_gradient_fill (cairo_t* cr, obj_state_t* obj, int filled, pointf* A, int n)
-{
+static void cairo_gradient_fill(cairo_t *cr, obj_state_t *obj, int filled,
+                                pointf *A, size_t n) {
     cairo_pattern_t* pat;
-    float angle = obj->gradient_angle * M_PI / 180;
-    float r1,r2;
+    double angle = obj->gradient_angle * M_PI / 180;
     pointf G[2],c1;
 
     if (filled == GRADIENT) {
@@ -315,9 +354,9 @@ static void cairo_gradient_fill (cairo_t* cr, obj_state_t* obj, int filled, poin
     else {
 	get_gradient_points(A, G, n, 0, 1);
 	  //r1 is inner radius, r2 is outer radius
-	r1 = G[1].x;    /* Set a r2/4 in get_gradient_points */
-	r2 = G[1].y;
-	if (angle == 0) {
+	const double r1 = G[1].x; // set a r2 ÷ 4 in get_gradient_points
+	const double r2 = G[1].y;
+	if (obj->gradient_angle == 0) {
 	    c1.x = G[0].x;
 	    c1.y = G[0].y;
 	}
@@ -343,7 +382,7 @@ static void cairo_gradient_fill (cairo_t* cr, obj_state_t* obj, int filled, poin
 static void cairogen_ellipse(GVJ_t * job, pointf * A, int filled)
 {
     obj_state_t *obj = job->obj;
-    cairo_t *cr = (cairo_t *) job->context;
+    cairo_t *cr = job->context;
     cairo_matrix_t matrix;
     double rx, ry;
 
@@ -355,8 +394,8 @@ static void cairogen_ellipse(GVJ_t * job, pointf * A, int filled)
     ry = A[1].y - A[0].y;
 
 #define RMIN 0.01
-if (rx < RMIN) rx = RMIN;
-if (ry < RMIN) ry = RMIN;
+    rx = fmax(rx, RMIN);
+    ry = fmax(ry, RMIN);
 
     cairo_translate(cr, A[0].x, -A[0].y);
     cairo_scale(cr, rx, ry);
@@ -365,79 +404,69 @@ if (ry < RMIN) ry = RMIN;
 
     cairo_set_matrix(cr, &matrix);
 
-    if (filled == GRADIENT || filled == (RGRADIENT)) {
+    if (filled == GRADIENT || filled == RGRADIENT) {
 	cairo_gradient_fill (cr, obj, filled, A, 2);
     }
     else if (filled) {
-	cairogen_set_color(cr, &(obj->fillcolor));
+	cairogen_set_color(cr, &obj->fillcolor);
 	cairo_fill_preserve(cr);
     }
-    cairogen_set_color(cr, &(obj->pencolor));
+    cairogen_set_color(cr, &obj->pencolor);
     cairo_stroke(cr);
 }
 
-static void
-cairogen_polygon(GVJ_t * job, pointf * A, int n, int filled)
-{
+static void cairogen_polygon(GVJ_t *job, pointf *A, size_t n, int filled) {
     obj_state_t *obj = job->obj;
-    cairo_t *cr = (cairo_t *) job->context;
-    int i;
+    cairo_t *cr = job->context;
 
     cairogen_set_penstyle(job, cr);
 
     cairo_move_to(cr, A[0].x, -A[0].y);
-    for (i = 1; i < n; i++)
+    for (size_t i = 1; i < n; i++)
     cairo_line_to(cr, A[i].x, -A[i].y);
     cairo_close_path(cr);
-    if (filled == GRADIENT || filled == (RGRADIENT)) {
-	cairo_gradient_fill (cr, obj, filled, A, n);
+    if (filled == GRADIENT || filled == RGRADIENT) {
+	cairo_gradient_fill(cr, obj, filled, A, n);
     }
     else if (filled) {
-	cairogen_set_color(cr, &(obj->fillcolor));
+	cairogen_set_color(cr, &obj->fillcolor);
 	cairo_fill_preserve(cr);
     }
-    cairogen_set_color(cr, &(obj->pencolor));
+    cairogen_set_color(cr, &obj->pencolor);
     cairo_stroke(cr);
 }
 
-static void
-cairogen_bezier(GVJ_t * job, pointf * A, int n, int arrow_at_start,
-		int arrow_at_end, int filled)
-{
+static void cairogen_bezier(GVJ_t *job, pointf *A, size_t n, int filled) {
     obj_state_t *obj = job->obj;
-    cairo_t *cr = (cairo_t *) job->context;
-    int i;
+    cairo_t *cr = job->context;
 
     cairogen_set_penstyle(job, cr);
 
     cairo_move_to(cr, A[0].x, -A[0].y);
-    for (i = 1; i < n; i += 3)
+    for (size_t i = 1; i < n; i += 3)
 	cairo_curve_to(cr, A[i].x, -A[i].y, A[i + 1].x, -A[i + 1].y,
 		       A[i + 2].x, -A[i + 2].y);
-    if (filled == GRADIENT || filled == (RGRADIENT)) {
-	cairo_gradient_fill (cr, obj, filled, A, n);
+    if (filled == GRADIENT || filled == RGRADIENT) {
+	cairo_gradient_fill(cr, obj, filled, A, n);
     }
     else if (filled) {
-	cairogen_set_color(cr, &(obj->fillcolor));
+	cairogen_set_color(cr, &obj->fillcolor);
 	cairo_fill_preserve(cr);
     }
-    cairogen_set_color(cr, &(obj->pencolor));
+    cairogen_set_color(cr, &obj->pencolor);
     cairo_stroke(cr);
 }
 
-static void
-cairogen_polyline(GVJ_t * job, pointf * A, int n)
-{
+static void cairogen_polyline(GVJ_t *job, pointf *A, size_t n) {
     obj_state_t *obj = job->obj;
-    cairo_t *cr = (cairo_t *) job->context;
-    int i;
+    cairo_t *cr = job->context;
 
     cairogen_set_penstyle(job, cr);
 
     cairo_move_to(cr, A[0].x, -A[0].y);
-    for (i = 1; i < n; i++)
+    for (size_t i = 1; i < n; i++)
 	cairo_line_to(cr, A[i].x, -A[i].y);
-    cairogen_set_color(cr, &(obj->pencolor));
+    cairogen_set_color(cr, &obj->pencolor);
     cairo_stroke(cr);
 }
 

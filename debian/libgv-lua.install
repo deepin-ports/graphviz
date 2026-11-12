@@ -1,3 +1,3 @@
-usr/lib/*/graphviz/lua/libgv_lua.so
-usr/lib/*/graphviz/lua/gv.so
+usr/lib/${DEB_HOST_MULTIARCH}/graphviz/lua/libgv_lua.so
+usr/lib/${DEB_HOST_MULTIARCH}/graphviz/lua/gv.so
 usr/share/man/man3/gv.3lua

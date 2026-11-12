@@ -1,0 +1,2 @@
+usr/lib/${DEB_HOST_MULTIARCH}/graphviz/libgvplugin_gdk.a
+usr/lib/${DEB_HOST_MULTIARCH}/graphviz/libgvplugin_gdk.so

@@ -1,0 +1,13 @@
+#!/bin/sh
+
+set -e
+
+case "$1" in
+	abort-install|remove)
+		if [ -f /usr/lib/@TRIPLET@/graphviz/config8 ]; then
+			rm -f /usr/lib/@TRIPLET@/graphviz/config8
+		fi
+	;;
+esac
+
+#DEBHELPER#

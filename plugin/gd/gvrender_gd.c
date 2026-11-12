@@ -1,38 +1,39 @@
-/* $Id$ $Revision$ */
-/* vim:set shiftwidth=4 ts=8: */
-
 /*************************************************************************
  * Copyright (c) 2011 AT&T Intellectual Property 
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
- * http://www.eclipse.org/legal/epl-v10.html
+ * https://www.eclipse.org/legal/epl-v10.html
  *
- * Contributors: See CVS logs. Details at http://www.graphviz.org/
+ * Contributors: Details at https://graphviz.org
  *************************************************************************/
 
 #include "config.h"
-
+#include "gdioctx_wrapper.h"
+#include "gdgen_text.h"
+#include "gd_psfontResolve.h"
+#include <assert.h>
+#include <limits.h>
+#include <math.h>
+#include <stdbool.h>
 #include <stdlib.h>
-#include <stddef.h>
 #include <stdint.h>
 #include <string.h>
 #include <fcntl.h>
+#include <gvc/gvplugin_render.h>
+#include <gvc/gvplugin_device.h>
+#include <gvc/gvcint.h>	/* for gvc->g for agget */
+#include <gd.h>
+#include <gdfontt.h>
+#include <gdfonts.h>
+#include <gdfontmb.h>
+#include <gdfontl.h>
+#include <gdfontg.h>
+#include <util/alloc.h>
+#include <util/gv_math.h>
+#include <util/unreachable.h>
 
-#include "gvplugin_render.h"
-#include "gvplugin_device.h"
-#include "gvcint.h"	/* for gvc->g for agget */
-#include "gd.h"
-
-#ifndef INT32_MAX
-#define INT32_MAX              (2147483647)
-#endif
-#ifndef UINT32_MAX
-#define UINT32_MAX             (4294967295U)
-#endif
-
-
-typedef enum {
+enum {
 	FORMAT_GIF,
 	FORMAT_JPEG,
 	FORMAT_PNG,
@@ -40,16 +41,16 @@ typedef enum {
 	FORMAT_GD,
 	FORMAT_GD2,
 	FORMAT_XBM,
-} format_type;
+};
 
-extern boolean mapbool(char *);
-extern pointf Bezier(pointf * V, int degree, double t, pointf * Left, pointf * Right);
+extern bool mapbool(const char *);
+extern pointf Bezier(pointf *V, double t, pointf *Left, pointf *Right);
 
 #define BEZIERSUBDIVISION 10
 
 static void gdgen_resolve_color(GVJ_t * job, gvcolor_t * color)
 {
-    gdImagePtr im = (gdImagePtr) job->context;
+    gdImagePtr im = job->context;
     int alpha;
 
     if (!im)
@@ -69,64 +70,64 @@ static void gdgen_resolve_color(GVJ_t * job, gvcolor_t * color)
     color->type = COLOR_INDEX;
 }
 
-static int white, black, transparent, basecolor;
+static int transparent, basecolor;
 
 #define GD_XYMAX INT32_MAX
 
 static void gdgen_begin_page(GVJ_t * job)
 {
-    char *bgcolor_str = NULL, *truecolor_str = NULL;
-    boolean truecolor_p = FALSE;	/* try to use cheaper paletted mode */
-    boolean bg_transparent_p = FALSE;
+    bool truecolor_p = false;	/* try to use cheaper paletted mode */
     gdImagePtr im = NULL;
 
-    truecolor_str = agget((graph_t*)(job->gvc->g), "truecolor");	/* allow user to force truecolor */
-    bgcolor_str = agget((graph_t*)(job->gvc->g), "bgcolor");
+    const char *const truecolor_str = agget(job->gvc->g, "truecolor"); // allow user to force truecolor
+    const char *const bgcolor_str = agget(job->gvc->g, "bgcolor");
 
     if (truecolor_str && truecolor_str[0])
 	truecolor_p = mapbool(truecolor_str);
 
     if (bgcolor_str && strcmp(bgcolor_str, "transparent") == 0) {
-	bg_transparent_p = TRUE;
 	if (job->render.features->flags & GVDEVICE_DOES_TRUECOLOR)
-	    truecolor_p = TRUE;	/* force truecolor */
+	    truecolor_p = true;	/* force truecolor */
     }
 
     if (GD_has_images(job->gvc->g))
-	truecolor_p = TRUE;	/* force truecolor */
+	truecolor_p = true;	/* force truecolor */
 
     if (job->external_context) {
 	if (job->common->verbose)
 	    fprintf(stderr, "%s: using existing GD image\n", job->common->cmdname);
-	im = (gdImagePtr) (job->context);
+	im = job->context;
     } else {
         if (job->width * job->height >= GD_XYMAX) {
 	    double scale = sqrt(GD_XYMAX / (job->width * job->height));
-	    job->width *= scale;
-	    job->height *= scale;
+	    assert(scale > 0 && scale <= 1);
+	    job->width = (unsigned)(job->width * scale);
+	    job->height = (unsigned)(job->height * scale);
 	    job->zoom *= scale;
 	    fprintf(stderr,
 		"%s: graph is too large for gd-renderer bitmaps. Scaling by %g to fit\n",
 		job->common->cmdname, scale);
 	}
+	assert(job->width <= INT_MAX);
+	assert(job->height <= INT_MAX);
 	if (truecolor_p) {
 	    if (job->common->verbose)
 		fprintf(stderr,
-			"%s: allocating a %dK TrueColor GD image (%d x %d pixels)\n",
+			"%s: allocating a %0.fK TrueColor GD image (%d x %d pixels)\n",
 			job->common->cmdname,
-			ROUND(job->width * job->height * 4 / 1024.),
+			round(job->width * job->height * 4 / 1024.),
 			job->width, job->height);
-	    im = gdImageCreateTrueColor(job->width, job->height);
+	    im = gdImageCreateTrueColor((int)job->width, (int)job->height);
 	} else {
 	    if (job->common->verbose)
 		fprintf(stderr,
-			"%s: allocating a %dK PaletteColor GD image (%d x %d pixels)\n",
+			"%s: allocating a %.0fK PaletteColor GD image (%d x %d pixels)\n",
 			job->common->cmdname,
-			ROUND(job->width * job->height / 1024.),
+			round(job->width * job->height / 1024.),
 			job->width, job->height);
-	    im = gdImageCreate(job->width, job->height);
+	    im = gdImageCreate((int)job->width, (int)job->height);
 	}
-        job->context = (void *) im;
+        job->context = im;
     }
 
     if (!im) {
@@ -141,52 +142,37 @@ static void gdgen_begin_page(GVJ_t * job)
 					   gdBlueMax, gdAlphaTransparent);
     gdImageColorTransparent(im, transparent);
 
-    white = gdImageColorResolveAlpha(im,
-				     gdRedMax, gdGreenMax, gdBlueMax,
-				     gdAlphaOpaque);
-
-    black = gdImageColorResolveAlpha(im, 0, 0, 0, gdAlphaOpaque);
-
     /* Blending must be off to lay a transparent basecolor.
        Nothing to blend with anyway. */
-    gdImageAlphaBlending(im, FALSE);
+    gdImageAlphaBlending(im, false);
     gdImageFill(im, im->sx / 2, im->sy / 2, transparent);
     /* Blend everything else together,
        especially fonts over non-transparent backgrounds */
-    gdImageAlphaBlending(im, TRUE);
+    gdImageAlphaBlending(im, true);
 }
-
-extern int gvdevice_gd_putBuf (gdIOCtx *context, const void *buffer, int len);
-extern void gvdevice_gd_putC (gdIOCtx *context, int C);
 
 static void gdgen_end_page(GVJ_t * job)
 {
-    gdImagePtr im = (gdImagePtr) job->context;
+    gdImagePtr im = job->context;
 
-    gdIOCtx ctx;
-
-    ctx.putBuf = gvdevice_gd_putBuf;
-    ctx.putC = gvdevice_gd_putC;
-    ctx.tell = (void*)job;    /* hide *job here */
+    gd_context_t gd_context = {
+	.ctx = {.putBuf = gvdevice_gd_putBuf, .putC = gvdevice_gd_putC},
+	.job = job,
+    };
 
     if (!im)
 	return;
     if (job->external_context) {
 	/* leave image in memory to be handled by Gdtclft output routines */
-#ifdef MYTRACE
-	fprintf(stderr, "gdgen_end_graph (to memory)\n");
-#endif
     } else {
 	/* Only save the alpha channel in outputs that support it if
 	   the base color was transparent.   Otherwise everything
 	   was blended so there is no useful alpha info */
-	gdImageSaveAlpha(im, (basecolor == transparent));
+	gdImageSaveAlpha(im, basecolor == transparent);
 	switch (job->render.id) {
 	case FORMAT_GIF:
-#ifdef HAVE_GD_GIF
 	    gdImageTrueColorToPalette(im, 0, 256);
-	    gdImageGifCtx(im, &ctx);
-#endif
+	    gdImageGifCtx(im, &gd_context.ctx);
 	    break;
 	case FORMAT_JPEG:
 #ifdef HAVE_GD_JPEG
@@ -199,25 +185,23 @@ static void gdgen_end_page(GVJ_t * job)
 	     * be near optimal for many applications).  See the IJG JPEG
 	     * library documentation for more details.  */
 #define JPEG_QUALITY -1
-	    gdImageJpegCtx(im, &ctx, JPEG_QUALITY);
+	    gdImageJpegCtx(im, &gd_context.ctx, JPEG_QUALITY);
 #endif
 
 	    break;
 	case FORMAT_PNG:
 #ifdef HAVE_GD_PNG
-	    gdImagePngCtx(im, &ctx);
+	    gdImagePngCtx(im, &gd_context.ctx);
 #endif
 	    break;
 
-#ifdef HAVE_GD_GIF
 	case FORMAT_WBMP:
 	    {
 	        /* Use black for the foreground color for the B&W wbmp image. */
 		int black = gdImageColorResolveAlpha(im, 0, 0, 0, gdAlphaOpaque);
-		gdImageWBMPCtx(im, black, &ctx);
+		gdImageWBMPCtx(im, black, &gd_context.ctx);
 	    }
 	    break;
-#endif
 
 	case FORMAT_GD:
 	    gdImageGd(im, job->output_file);
@@ -226,60 +210,18 @@ static void gdgen_end_page(GVJ_t * job)
 #ifdef HAVE_LIBZ
 	case FORMAT_GD2:
 #define GD2_CHUNKSIZE 128
-#define GD2_RAW 1
 #define GD2_COMPRESSED 2
 	    gdImageGd2(im, job->output_file, GD2_CHUNKSIZE, GD2_COMPRESSED);
 	    break;
 #endif
 
 	case FORMAT_XBM:
-#if 0
-/* libgd support only reading .xpm files */
-#ifdef HAVE_GD_XPM
-	    gdImageXbm(im, job->output_file);
-#endif
-#endif
 	    break;
+	default:
+	    UNREACHABLE();
 	}
 	gdImageDestroy(im);
-#ifdef MYTRACE
-	fprintf(stderr, "gdgen_end_graph (to file)\n");
-#endif
 	job->context = NULL;
-    }
-}
-
-static void gdgen_missingfont(char *err, char *fontreq)
-{
-    static char *lastmissing = 0;
-    static int n_errors = 0;
-
-    if (n_errors >= 20)
-	return;
-    if ((lastmissing == 0) || (strcmp(lastmissing, fontreq))) {
-#ifdef HAVE_GD_FONTCONFIG
-#if 0
-/* FIXME - error function */
-	agerr(AGERR, "%s : %s\n", err, fontreq);
-#endif
-#else
-	char *p = getenv("GDFONTPATH");
-	if (!p)
-	    p = DEFAULT_FONTPATH;
-#if 0
-/* FIXME - error function */
-	agerr(AGERR, "%s : %s in %s\n", err, fontreq, p);
-#endif
-#endif
-	if (lastmissing)
-	    free(lastmissing);
-	lastmissing = strdup(fontreq);
-	n_errors++;
-#if 0
-/* FIXME - error function */
-	if (n_errors >= 20)
-	    agerr(AGWARN, "(font errors suppressed)\n");
-#endif
     }
 }
 
@@ -288,25 +230,20 @@ static void gdgen_missingfont(char *err, char *fontreq)
 /* fontsize at which text is rendered by a simple line */
 #define FONTSIZE_TOO_SMALL 1.5
 
-#ifdef _WIN32
-#   define GD_IMPORT __declspec(dllimport)
-#else
-#   define GD_IMPORT extern
-#endif
-GD_IMPORT gdFontPtr gdFontTiny, gdFontSmall, gdFontMediumBold, gdFontLarge, gdFontGiant;
-
 void gdgen_text(gdImagePtr im, pointf spf, pointf epf, int fontcolor, double fontsize, int fontdpi, double fontangle, char *fontname, char *str)
 {
-    gdFTStringExtra strex;
     point sp, ep; /* start point, end point, in pixels */
 
     PF2P(spf, sp);
     PF2P(epf, ep);
 
-    strex.flags = gdFTEX_RESOLUTION;
-    strex.hdpi = strex.vdpi = fontdpi;
+    gdFTStringExtra strex = {
+        .flags = gdFTEX_RESOLUTION,
+        .hdpi = fontdpi,
+        .vdpi = fontdpi,
+    };
 
-    if (strstr(fontname, "/"))
+    if (strchr(fontname, '/'))
         strex.flags |= gdFTEX_FONTPATHNAME;
     else
         strex.flags |= gdFTEX_FONTCONFIG;
@@ -318,20 +255,21 @@ void gdgen_text(gdImagePtr im, pointf spf, pointf epf, int fontcolor, double fon
         gdImageLine(im, sp.x, sp.y, ep.x, ep.y, fontcolor);
     } else {
 #ifdef HAVE_GD_FREETYPE
-        char *err;
         int brect[8];
 #ifdef HAVE_GD_FONTCONFIG
         char* fontlist = fontname;
 #else
-        extern char *gd_alternate_fontlist(char *font);
+        extern char *gd_alternate_fontlist(const char *font);
         char* fontlist = gd_alternate_fontlist(fontname);
 #endif
-        err = gdImageStringFTEx(im, brect, fontcolor,
+        const char *const err = gdImageStringFTEx(im, brect, fontcolor,
                 fontlist, fontsize, fontangle, sp.x, sp.y, str, &strex);
+#ifndef HAVE_GD_FONTCONFIG
+        free(fontlist);
+#endif
 
         if (err) {
             /* revert to builtin fonts */
-            gdgen_missingfont(err, fontname);
 #endif
             sp.y += 2;
             if (fontsize <= 8.5) {
@@ -351,17 +289,12 @@ void gdgen_text(gdImagePtr im, pointf spf, pointf epf, int fontcolor, double fon
     }
 }
 
-extern char* gd_psfontResolve (PostscriptAlias* pa);
-
 static void gdgen_textspan(GVJ_t * job, pointf p, textspan_t * span)
 {
-    gdImagePtr im = (gdImagePtr) job->context;
+    gdImagePtr im = job->context;
     pointf spf, epf;
     double spanwidth = span->size.x * job->zoom * job->dpi.x / POINTS_PER_INCH;
     char* fontname;
-#ifdef HAVE_GD_FONTCONFIG
-    PostscriptAlias *pA;
-#endif
 
     if (!im)
 	return;
@@ -392,7 +325,7 @@ static void gdgen_textspan(GVJ_t * job, pointf p, textspan_t * span)
     }
 
 #ifdef HAVE_GD_FONTCONFIG
-    pA = span->font->postscript_alias;
+    PostscriptAlias *const pA = span->font->postscript_alias;
     if (pA)
 	fontname = gd_psfontResolve (pA);
     else
@@ -402,8 +335,8 @@ static void gdgen_textspan(GVJ_t * job, pointf p, textspan_t * span)
     gdgen_text(im, spf, epf,
 	    job->obj->pencolor.u.index,
 	    span->font->size * job->zoom,
-	    job->dpi.x,
-	    job->rotation ? (M_PI / 2) : 0,
+	    d2i(job->dpi.x),
+	    job->rotation ? M_PI / 2 : 0,
 	    fontname,
 	    span->str);
 }
@@ -411,7 +344,7 @@ static void gdgen_textspan(GVJ_t * job, pointf p, textspan_t * span)
 static int gdgen_set_penstyle(GVJ_t * job, gdImagePtr im, gdImagePtr* brush)
 {
     obj_state_t *obj = job->obj;
-    int i, pen, width, dashstyle[40];
+    int i, pen, dashstyle[20];
 
     if (obj->pen == PEN_DASHED) {
 	for (i = 0; i < 10; i++)
@@ -423,7 +356,7 @@ static int gdgen_set_penstyle(GVJ_t * job, gdImagePtr im, gdImagePtr* brush)
     } else if (obj->pen == PEN_DOTTED) {
 	for (i = 0; i < 2; i++)
 	    dashstyle[i] = obj->pencolor.u.index;
-	for (; i < 14; i++)
+	for (; i < 12; i++)
 	    dashstyle[i] = gdTransparent;
 	gdImageSetStyle(im, dashstyle, 12);
 	pen = gdStyled;
@@ -431,12 +364,12 @@ static int gdgen_set_penstyle(GVJ_t * job, gdImagePtr im, gdImagePtr* brush)
 	pen = obj->pencolor.u.index;
     }
 
-    width = obj->penwidth * job->zoom;
+    int width = d2i(obj->penwidth * job->zoom);
     if (width < PENWIDTH_NORMAL)
 	width = PENWIDTH_NORMAL;  /* gd can't do thin lines */
     gdImageSetThickness(im, width);
     /* use brush instead of Thickness to improve end butts */
-    if (width != PENWIDTH_NORMAL) {
+    if (width != (int)PENWIDTH_NORMAL) {
 	if (im->trueColor) {
 	    *brush = gdImageCreateTrueColor(width,width);
 	}
@@ -456,36 +389,31 @@ static int gdgen_set_penstyle(GVJ_t * job, gdImagePtr im, gdImagePtr* brush)
     return pen;
 }
 
-static void
-gdgen_bezier(GVJ_t * job, pointf * A, int n, int arrow_at_start,
-	     int arrow_at_end, int filled)
-{
+static void gdgen_bezier(GVJ_t *job, pointf *A, size_t n, int filled) {
     obj_state_t *obj = job->obj;
-    gdImagePtr im = (gdImagePtr) job->context;
-    pointf p0, p1, V[4];
-    int i, j, step, pen;
-    boolean pen_ok, fill_ok;
+    gdImagePtr im = job->context;
+    pointf V[4];
     gdImagePtr brush = NULL;
     gdPoint F[4];
 
     if (!im)
 	return;
 
-    pen = gdgen_set_penstyle(job, im, &brush);
-    pen_ok = (pen != gdImageGetTransparent(im));
-    fill_ok = (filled && obj->fillcolor.u.index != gdImageGetTransparent(im));
+    const int pen = gdgen_set_penstyle(job, im, &brush);
+    const bool pen_ok = pen != gdImageGetTransparent(im);
+    const bool fill_ok = filled && obj->fillcolor.u.index != gdImageGetTransparent(im);
 
     if (pen_ok || fill_ok) {
         V[3] = A[0];
         PF2P(A[0], F[0]);
         PF2P(A[n-1], F[3]);
-        for (i = 0; i + 3 < n; i += 3) {
+        for (size_t i = 0; i + 3 < n; i += 3) {
 	    V[0] = V[3];
-	    for (j = 1; j <= 3; j++)
+	    for (size_t j = 1; j <= 3; j++)
 	        V[j] = A[i + j];
-	    p0 = V[0];
-	    for (step = 1; step <= BEZIERSUBDIVISION; step++) {
-	        p1 = Bezier(V, 3, (double) step / BEZIERSUBDIVISION, NULL, NULL);
+	    pointf p0 = V[0];
+	    for (int step = 1; step <= BEZIERSUBDIVISION; step++) {
+	        const pointf p1 = Bezier(V, (double)step / BEZIERSUBDIVISION, NULL, NULL);
 	        PF2P(p0, F[1]);
 	        PF2P(p1, F[2]);
 	        if (pen_ok)
@@ -501,38 +429,35 @@ gdgen_bezier(GVJ_t * job, pointf * A, int n, int arrow_at_start,
 }
 
 static gdPoint *points;
-static int points_allocated;
+static size_t points_allocated;
 
-static void gdgen_polygon(GVJ_t * job, pointf * A, int n, int filled)
-{
+static void gdgen_polygon(GVJ_t *job, pointf *A, size_t n, int filled) {
     obj_state_t *obj = job->obj;
-    gdImagePtr im = (gdImagePtr) job->context;
+    gdImagePtr im = job->context;
     gdImagePtr brush = NULL;
-    int i;
-    int pen;
-    boolean pen_ok, fill_ok;
 
     if (!im)
 	return;
 
-    pen = gdgen_set_penstyle(job, im, &brush);
-    pen_ok = (pen != gdImageGetTransparent(im));
-    fill_ok = (filled && obj->fillcolor.u.index != gdImageGetTransparent(im));
+    const int pen = gdgen_set_penstyle(job, im, &brush);
+    const bool pen_ok = pen != gdImageGetTransparent(im);
+    const bool fill_ok = filled && obj->fillcolor.u.index != gdImageGetTransparent(im);
 
     if (pen_ok || fill_ok) {
         if (n > points_allocated) {
-	    points = realloc(points, n * sizeof(gdPoint));
+	    points = gv_recalloc(points, points_allocated, n, sizeof(gdPoint));
 	    points_allocated = n;
 	}
-        for (i = 0; i < n; i++) {
+        for (size_t i = 0; i < n; i++) {
 	    points[i].x = ROUND(A[i].x);
 	    points[i].y = ROUND(A[i].y);
         }
+        assert(n <= INT_MAX);
         if (fill_ok)
-	    gdImageFilledPolygon(im, points, n, obj->fillcolor.u.index);
+	    gdImageFilledPolygon(im, points, (int)n, obj->fillcolor.u.index);
     
         if (pen_ok)
-            gdImagePolygon(im, points, n, pen);
+            gdImagePolygon(im, points, (int)n, pen);
     }
     if (brush)
 	gdImageDestroy(brush);
@@ -541,21 +466,18 @@ static void gdgen_polygon(GVJ_t * job, pointf * A, int n, int filled)
 static void gdgen_ellipse(GVJ_t * job, pointf * A, int filled)
 {
     obj_state_t *obj = job->obj;
-    gdImagePtr im = (gdImagePtr) job->context;
-    double dx, dy;
-    int pen;
-    boolean pen_ok, fill_ok;
+    gdImagePtr im = job->context;
     gdImagePtr brush = NULL;
 
     if (!im)
 	return;
 
-    pen = gdgen_set_penstyle(job, im, &brush);
-    pen_ok = (pen != gdImageGetTransparent(im));
-    fill_ok = (filled && obj->fillcolor.u.index != gdImageGetTransparent(im));
+    const int pen = gdgen_set_penstyle(job, im, &brush);
+    const bool pen_ok = pen != gdImageGetTransparent(im);
+    const bool fill_ok = filled && obj->fillcolor.u.index != gdImageGetTransparent(im);
 
-    dx = 2 * (A[1].x - A[0].x);
-    dy = 2 * (A[1].y - A[0].y);
+    const double dx = 2 * (A[1].x - A[0].x);
+    const double dy = 2 * (A[1].y - A[0].y);
 
     if (fill_ok)
 	gdImageFilledEllipse(im, ROUND(A[0].x), ROUND(A[0].y),
@@ -568,25 +490,20 @@ static void gdgen_ellipse(GVJ_t * job, pointf * A, int filled)
 	gdImageDestroy(brush);
 }
 
-static void gdgen_polyline(GVJ_t * job, pointf * A, int n)
-{
-    gdImagePtr im = (gdImagePtr) job->context;
-    pointf p, p1;
-    int i;
-    int pen;
-    boolean pen_ok;
+static void gdgen_polyline(GVJ_t *job, pointf *A, size_t n) {
+    gdImagePtr im = job->context;
     gdImagePtr brush = NULL;
 
     if (!im)
 	return;
 
-    pen = gdgen_set_penstyle(job, im, &brush);
-    pen_ok = (pen != gdImageGetTransparent(im));
+    const int pen = gdgen_set_penstyle(job, im, &brush);
+    const bool pen_ok = pen != gdImageGetTransparent(im);
 
     if (pen_ok) {
-        p = A[0];
-        for (i = 1; i < n; i++) {
-	    p1 = A[i];
+        pointf p = A[0];
+        for (size_t i = 1; i < n; i++) {
+	    const pointf p1 = A[i];
 	    gdImageLine(im, ROUND(p.x), ROUND(p.y),
 		        ROUND(p1.x), ROUND(p1.y), pen);
 	    p = p1;
@@ -667,10 +584,8 @@ gvplugin_installed_t gvrender_gd_types[] = {
 };
 
 gvplugin_installed_t gvdevice_gd_types2[] = {
-#ifdef HAVE_GD_GIF
     {FORMAT_GIF, "gif:gd", 1, NULL, &device_features_gd_tc},  /* pretend gif is truecolor because it supports transparency */
     {FORMAT_WBMP, "wbmp:gd", 1, NULL, &device_features_gd},
-#endif
 
 #ifdef HAVE_GD_JPEG
     {FORMAT_JPEG, "jpe:gd", 1, NULL, &device_features_gd},
@@ -688,11 +603,5 @@ gvplugin_installed_t gvdevice_gd_types2[] = {
     {FORMAT_GD2, "gd2:gd", 1, NULL, &device_features_gd_tc_no_writer},
 #endif
 
-#if 0
-/* libgd has no support for xbm as output */
-#ifdef HAVE_GD_XPM
-    {FORMAT_XBM, "xbm:gd", 1, NULL, &device_features_gd},
-#endif
-#endif
     {0, NULL, 0, NULL, NULL}
 };

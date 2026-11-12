@@ -1,29 +1,29 @@
-#include	"dthdr.h"
+#include "config.h"
 
+#include	<cdt/dthdr.h>
+#include	<stddef.h>
 
 /*	Renew the object at the current finger.
 **
 **	Written by Kiem-Phong Vo (5/25/96)
 */
 
-void* dtrenew(Dt_t* dt, reg void* obj)
+void* dtrenew(Dt_t* dt, void* obj)
 {
-	reg void*	key;
-	reg Dtlink_t	*e, *t, **s;
-	reg Dtdisc_t*	disc = dt->disc;
+	void*	key;
+	Dtlink_t	*e, *t, **s;
+	Dtdisc_t*	disc = dt->disc;
 
 	UNFLATTEN(dt);
 
-	if(!(e = dt->data->here) || _DTOBJ(e,disc->link) != obj)
-		return NIL(void*);
+	if (!(e = dt->data.here) || _DTOBJ(e,disc->link) != obj)
+		return NULL;
 
-	if(dt->data->type&(DT_STACK|DT_QUEUE|DT_LIST))
-		return obj;
-	else if(dt->data->type&(DT_OSET|DT_OBAG) )
+	if (dt->data.type & (DT_OSET|DT_OBAG))
 	{	if(!e->right )	/* make left child the new root */
-			dt->data->here = e->left;
+			dt->data.here = e->left;
 		else		/* make right child the new root */
-		{	dt->data->here = e->right;
+		{	dt->data.here = e->right;
 
 			/* merge left subtree to right subtree */
 			if(e->left)
@@ -33,8 +33,8 @@ void* dtrenew(Dt_t* dt, reg void* obj)
 			}
 		}
 	}
-	else /*if(dt->data->type&(DT_SET|DT_BAG))*/
-	{	s = dt->data->htab + HINDEX(dt->data->ntab,e->hash);
+	else // if (dt.data->type & (DT_SET|DT_BAG))
+	{	s = dt->data.htab + HINDEX(dt->data.ntab, e->hash);
 		if((t = *s) == e)
 			*s = e->right;
 		else
@@ -43,10 +43,10 @@ void* dtrenew(Dt_t* dt, reg void* obj)
 			t->right = e->right;
 		}
 		key = _DTKEY(obj,disc->key,disc->size);
-		e->hash = _DTHSH(dt,key,disc,disc->size);
-		dt->data->here = NIL(Dtlink_t*);
+		e->hash = dtstrhash(key, disc->size);
+		dt->data.here = NULL;
 	}
 
-	dt->data->size -= 1;
-	return (*dt->meth->searchf)(dt,(void*)e,DT_RENEW) ? obj : NIL(void*);
+	--dt->data.size;
+	return dt->meth->searchf(dt, e, DT_RENEW) ? obj : NULL;
 }

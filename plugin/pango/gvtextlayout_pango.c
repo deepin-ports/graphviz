@@ -1,24 +1,27 @@
-/* $Id$ $Revision$ */
-/* vim:set shiftwidth=4 ts=8: */
-
 /*************************************************************************
  * Copyright (c) 2011 AT&T Intellectual Property
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
- * http://www.eclipse.org/legal/epl-v10.html
+ * https://www.eclipse.org/legal/epl-v10.html
  *
- * Contributors: See CVS logs. Details at http://www.graphviz.org/
+ * Contributors: Details at https://graphviz.org
  *************************************************************************/
 
 #include "config.h"
 
+#include <assert.h>
+#include <limits.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
-#include "gvplugin_render.h"
-#include "agxbuf.h"
-#include "utils.h"
-#include "gvplugin_textlayout.h"
+#include <gvc/gvplugin_render.h>
+#include <common/utils.h>
+#include <gvc/gvplugin_textlayout.h>
+#include <util/agxbuf.h>
+#include <util/alloc.h>
+#include <util/gv_math.h>
+#include <util/xml.h>
 
 #include <pango/pangocairo.h>
 #include "gvgetfontlist.h"
@@ -26,43 +29,42 @@
 #include <pango/pangofc-font.h>
 #endif
 
-#define N_NEW(n,t)      (t*)malloc((n)*sizeof(t))
-
 static void pango_free_layout (void *layout)
 {
-    g_object_unref((PangoLayout*)layout);
+    g_object_unref(layout);
 }
 
 static char* pango_psfontResolve (PostscriptAlias* pa)
 {
-    static char buf[1024];
-    strcpy(buf, pa->family);
-    strcat(buf, ",");
+    agxbuf buf = {0};
+    agxbprint(&buf, "%s,", pa->family);
     if (pa->weight) {
-        strcat(buf, " ");
-        strcat(buf, pa->weight);
+        agxbprint(&buf, " %s", pa->weight);
     }
     if (pa->stretch) {
-        strcat(buf, " ");
-        strcat(buf, pa->stretch);
+        agxbprint(&buf, " %s", pa->stretch);
     }
     if (pa->style) {
-        strcat(buf, " ");
-        strcat(buf, pa->style);
+        agxbprint(&buf, " %s", pa->style);
     }
-    return buf;
+    return agxbdisown(&buf);
 }
 
 #define FONT_DPI 96.
 
 #define ENABLE_PANGO_MARKUP
-#ifdef ENABLE_PANGO_MARKUP
-#define FULL_MARKUP "<span weight=\"bold\" style=\"italic\" underline=\"single\"><sup><sub></sub></sup></span>"
-#endif
 
-static boolean pango_textlayout(textspan_t * span, char **fontpath)
+// wrapper to handle difference in calling conventions between `agxbput` and
+// `gv_xml_escape`’s `cb`
+static int agxbput_int(void *buffer, const char *s) {
+  size_t len = agxbput(buffer, s);
+  assert(len <= INT_MAX);
+  return (int)len;
+}
+
+static bool pango_textlayout(textspan_t * span, char **fontpath)
 {
-    static char buf[1024];  /* returned in fontpath, only good until next call */
+    static agxbuf buf; // returned in fontpath, only good until next call
     static PangoFontMap *fontmap;
     static PangoContext *context;
     static PangoFontDescription *desc;
@@ -70,28 +72,20 @@ static boolean pango_textlayout(textspan_t * span, char **fontpath)
     static double fontsize;
     static gv_font_map* gv_fmap;
     char *fnt, *psfnt = NULL;
-    PangoLayout *layout;
-    PangoRectangle logical_rect;
-    cairo_font_options_t* options;
     PangoFont *font;
 #ifdef ENABLE_PANGO_MARKUP
     PangoAttrList *attrs;
     GError *error = NULL;
     int flags;
 #endif
+    bool text_needs_free = false;
     char *text;
-    double textlayout_scale;
-    PostscriptAlias *pA;
 
     if (!context) {
 	fontmap = pango_cairo_font_map_new();
 	gv_fmap = get_font_mapping(fontmap);
-#ifdef HAVE_PANGO_FONT_MAP_CREATE_CONTEXT
 	context = pango_font_map_create_context (fontmap);
-#else
-	context = pango_cairo_font_map_create_context (PANGO_CAIRO_FONT_MAP(fontmap));
-#endif
-	options=cairo_font_options_create();
+	cairo_font_options_t* options = cairo_font_options_create();
 	cairo_font_options_set_antialias(options,CAIRO_ANTIALIAS_GRAY);
 	cairo_font_options_set_hint_style(options,CAIRO_HINT_STYLE_FULL);
 	cairo_font_options_set_hint_metrics(options,CAIRO_HINT_METRICS_ON);
@@ -102,89 +96,102 @@ static boolean pango_textlayout(textspan_t * span, char **fontpath)
 	g_object_unref(fontmap);
     }
 
-    if (!fontname || strcmp(fontname, span->font->name) != 0 || fontsize != span->font->size) {
-	fontname = span->font->name;
+    if (!fontname || strcmp(fontname, span->font->name) != 0 ||
+        !is_exactly_equal(fontsize, span->font->size)) {
+
+	/* check if the conversion to Pango units below will overflow */
+	if (INT_MAX / PANGO_SCALE < span->font->size) {
+	    return false;
+	}
+
+	free(fontname);
+	fontname = gv_strdup(span->font->name);
 	fontsize = span->font->size;
 	pango_font_description_free (desc);
 
-	pA = span->font->postscript_alias;
+	PostscriptAlias *pA = span->font->postscript_alias;
+	bool psfnt_needs_free = false;
 	if (pA) {
 	    psfnt = fnt = gv_fmap[pA->xfig_code].gv_font;
-	    if(!psfnt)
+	    if(!psfnt) {
 		psfnt = fnt = pango_psfontResolve (pA);
+		psfnt_needs_free = true;
+	    }
 	}
 	else
 	    fnt = fontname;
 
 	desc = pango_font_description_from_string(fnt);
-        /* all text layout is done at a scale of FONT_DPI (nominaly 96.) */
-        pango_font_description_set_size (desc, (gint)(fontsize * PANGO_SCALE));
+        // all text layout is done at a scale of FONT_DPI (nominally 96.)
+        pango_font_description_set_size (desc, (int)(fontsize * PANGO_SCALE));
 
         if (fontpath && (font = pango_font_map_load_font(fontmap, context, desc))) {  /* -v support */
-	    const char *fontclass;
+	    const char *fontclass = G_OBJECT_CLASS_NAME(G_OBJECT_GET_CLASS(font));
 
-	    fontclass = G_OBJECT_CLASS_NAME(G_OBJECT_GET_CLASS(font));
-
-	    buf[0] = '\0';
+	    agxbclear(&buf);
 	    if (psfnt) {
-		strcat(buf, "(ps:pango  ");
-		strcat(buf, psfnt);
-		strcat(buf, ") ");
+		agxbprint(&buf, "(ps:pango  %s) ", psfnt);
 	    }
-	    strcat(buf, "(");
-	    strcat(buf, fontclass);
-	    strcat(buf, ") ");
+	    agxbprint(&buf, "(%s) ", fontclass);
 #ifdef HAVE_PANGO_FC_FONT_LOCK_FACE
 	    if (strcmp(fontclass, "PangoCairoFcFont") == 0) {
-	        FT_Face face;
-	        PangoFcFont *fcfont;
-	        FT_Stream stream;
-	        FT_StreamDesc streamdesc;
-	        fcfont = PANGO_FC_FONT(font);
-	        face = pango_fc_font_lock_face(fcfont);
+	        PangoFcFont *fcfont = PANGO_FC_FONT(font);
+// `pango_fc_font_lock_face` arrived in Pango 1.4 and then was deprecated in
+// 1.44. Its replacement is `pango_font_get_hb_font`. However this replacement
+// does not seem to provide access to the underlying FreeType font information
+// we want. Since this code path is only enabled when `pango_fc_font_lock_face`
+// is available, suppress deprecation warnings and we will have to deal with the
+// loss of this informational output altogether when Pango finally removes it.
+#if __GNUC__
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
+	        FT_Face face = pango_fc_font_lock_face(fcfont);
+#ifdef __GNUC__
+#pragma GCC diagnostic pop
+#endif
 	        if (face) {
-		    strcat(buf, "\"");
-		    strcat(buf, face->family_name);
-		    strcat(buf, ", ");
-		    strcat(buf, face->style_name);
-		    strcat(buf, "\" ");
+		    agxbprint(&buf, "\"%s, %s\" ", face->family_name, face->style_name);
 
-		    stream = face->stream;
+		    FT_Stream stream = face->stream;
 		    if (stream) {
-			streamdesc = stream->pathname;
+			FT_StreamDesc streamdesc = stream->pathname;
 			if (streamdesc.pointer)
-			    strcat(buf, (char*)streamdesc.pointer);
+			    agxbput(&buf, streamdesc.pointer);
 		        else
-			    strcat(buf, "*no pathname available*");
+			    agxbput(&buf, "*no pathname available*");
 		    }
 		    else
-			strcat(buf, "*no stream available*");
+			agxbput(&buf, "*no stream available*");
 		}
+#if __GNUC__
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
 	        pango_fc_font_unlock_face(fcfont);
+#ifdef __GNUC__
+#pragma GCC diagnostic pop
+#endif
 	    }
 	    else
 #endif
 	    {
-    		PangoFontDescription *tdesc;
-		char *tfont;
-
-	        tdesc = pango_font_describe(font);
-	        tfont = pango_font_description_to_string(tdesc);
-	        strcat(buf, "\"");
-	        strcat(buf, tfont);
-	        strcat(buf, "\" ");
+    		PangoFontDescription *tdesc = pango_font_describe(font);
+		char *tfont = pango_font_description_to_string(tdesc);
+	        agxbprint(&buf, "\"%s\" ", tfont);
 	        g_free(tfont);
 	    }
-            *fontpath = buf;
+            *fontpath = agxbuse(&buf);
+        }
+        if (psfnt_needs_free) {
+            free(psfnt);
         }
     }
 
 #ifdef ENABLE_PANGO_MARKUP
-    if ((span->font) && (flags = span->font->flags)) {
-	unsigned char buf[BUFSIZ];
-	agxbuf xb;
+    if (span->font && (flags = span->font->flags)) {
+	agxbuf xb = {0};
 
-	agxbinit(&xb, BUFSIZ, buf);
 	agxbput(&xb,"<span");
 
 	if (flags & HTML_BF)
@@ -202,7 +209,8 @@ static boolean pango_textlayout(textspan_t * span, char **fontpath)
 	if (flags & HTML_SUB)
 	    agxbput(&xb,"<sub>");
 
-	agxbput (&xb,xml_string0(span->str, TRUE));
+	const xml_flags_t xml_flags = {.raw = 1, .dash = 1, .nbsp = 1};
+	gv_xml_escape(span->str, xml_flags, agxbput_int, &xb);
 
 	if (flags & HTML_SUB)
 	    agxbput(&xb,"</sub>");
@@ -214,6 +222,8 @@ static boolean pango_textlayout(textspan_t * span, char **fontpath)
 	    fprintf (stderr, "Error - pango_parse_markup: %s\n", error->message);
 	    text = span->str;
 	    attrs = NULL;
+	} else {
+	    text_needs_free = true;
 	}
 	agxbfree (&xb);
     }
@@ -225,8 +235,8 @@ static boolean pango_textlayout(textspan_t * span, char **fontpath)
     text = span->str;
 #endif
 
-    layout = pango_layout_new (context);
-    span->layout = (void *)layout;    /* layout free with textspan - see labels.c */
+    PangoLayout *layout = pango_layout_new (context);
+    span->layout = layout;    /* layout free with textspan - see labels.c */
     span->free_layout = pango_free_layout;    /* function for freeing pango layout */
 
     pango_layout_set_text (layout, text, -1);
@@ -236,42 +246,28 @@ static boolean pango_textlayout(textspan_t * span, char **fontpath)
 	pango_layout_set_attributes (layout, attrs);
 #endif
 
+    PangoRectangle logical_rect;
     pango_layout_get_extents (layout, NULL, &logical_rect);
 
     /* if pango doesn't like the font then it sets width=0 but height = garbage */
     if (logical_rect.width == 0)
 	logical_rect.height = 0;
 
-    textlayout_scale = POINTS_PER_INCH / (FONT_DPI * PANGO_SCALE);
-    span->size.x = (int)(logical_rect.width * textlayout_scale + 1);    /* round up so that width/height are never too small */
-    span->size.y = (int)(logical_rect.height * textlayout_scale + 1);
-
-    /* FIXME  -- Horrible kluge !!! */
-
-    /* For now we are using pango for single line blocks only.
-     * The logical_rect.height seems to be too high from the font metrics on some platforms.
-     * Use an assumed height based on the point size.
-     */
-
-    span->size.y = (int)(span->font->size * 1.1 + .5);
+    const double textlayout_scale = POINTS_PER_INCH / (FONT_DPI * PANGO_SCALE);
+    span->size.x = logical_rect.width * textlayout_scale;
+    span->size.y = logical_rect.height * textlayout_scale;
 
     /* The y offset from baseline to 0,0 of the bitmap representation */
-#if !defined(_WIN32) && defined PANGO_VERSION_MAJOR && (PANGO_VERSION_MAJOR >= 1)
     span->yoffset_layout = pango_layout_get_baseline (layout) * textlayout_scale;
-#else
-    {
-	/* do it the hard way on rhel5/centos5 */
-	PangoLayoutIter *iter = pango_layout_get_iter (layout);
-	span->yoffset_layout = pango_layout_iter_get_baseline (iter) * textlayout_scale;
-    }
-#endif
 
     /* The distance below midline for y centering of text strings */
-    span->yoffset_centerline = 0.2 * span->font->size;
+    span->yoffset_centerline = 0.05 * span->font->size;
 
-    if (logical_rect.width == 0)
-	return FALSE;
-    return TRUE;
+    const bool rc = logical_rect.width != 0 || strcmp(text, "") == 0;
+    if (text_needs_free) {
+	g_free(text);
+    }
+    return rc;
 }
 
 static gvtextlayout_engine_t pango_textlayout_engine = {

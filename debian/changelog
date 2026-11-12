@@ -1,45 +1,212 @@
-graphviz (2.42.4-3) unstable; urgency=medium
+graphviz (14.1.2-1) unstable; urgency=medium
 
-  * Add required python3-setuptools as build dependency (closes: #1080613).
+  * New upstream release.
+
+ -- Laszlo Boszormenyi (GCS) <gcs@debian.org>  Thu, 29 Jan 2026 17:59:23 +0100
+
+graphviz (14.1.1-2) unstable; urgency=medium
+
+  * Add bcomps and ccomps binaries to graphviz-tools package
+    (closes: #1124659).
+
+ -- Laszlo Boszormenyi (GCS) <gcs@debian.org>  Mon, 05 Jan 2026 19:24:29 +0100
+
+graphviz (14.1.1-1) unstable; urgency=medium
+
+  * New upstream release.
+  * Make graphviz depend on the pango plugin.
+
+ -- Laszlo Boszormenyi (GCS) <gcs@debian.org>  Sun, 14 Dec 2025 08:24:01 +0100
+
+graphviz (14.0.5-2) unstable; urgency=medium
+
+  * Upload to Sid.
+
+ -- Laszlo Boszormenyi (GCS) <gcs@debian.org>  Sat, 06 Dec 2025 18:40:22 +0100
+
+graphviz (14.0.5-1) experimental; urgency=medium
+
+  * New upstream release.
+  * Move PDF documentation to correct path.
+
+ -- Laszlo Boszormenyi (GCS) <gcs@debian.org>  Sun, 30 Nov 2025 08:43:56 +0100
+
+graphviz (14.0.4-1) experimental; urgency=medium
+
+  * New upstream release.
+  * Update watch file.
+
+ -- Laszlo Boszormenyi (GCS) <gcs@debian.org>  Thu, 20 Nov 2025 08:12:19 +0100
+
+graphviz (14.0.2-1) experimental; urgency=medium
+
+  * New upstream release.
+
+ -- Laszlo Boszormenyi (GCS) <gcs@debian.org>  Sat, 25 Oct 2025 09:20:31 +0200
+
+graphviz (14.0.1-1) experimental; urgency=medium
+
+  * New major upstream release.
+  * Library transition from libcgraph7 to libcgraph8 .
+  * Update libgv-lua package description (closes: #1117027).
+  * Remove now redundant Rules-Requires-Root value.
+
+ -- Laszlo Boszormenyi (GCS) <gcs@debian.org>  Sun, 12 Oct 2025 15:58:43 +0200
+
+graphviz (13.1.2-1) experimental; urgency=medium
+
+  * New upstream release.
+
+ -- Laszlo Boszormenyi (GCS) <gcs@debian.org>  Thu, 14 Aug 2025 18:04:58 +0200
+
+graphviz (13.1.1-1) experimental; urgency=medium
+
+  * New major upstream release.
+  * Add shlib version to package names.
+  * Update Standards-Version to 4.7.2 .
+
+ -- Laszlo Boszormenyi (GCS) <gcs@debian.org>  Tue, 22 Jul 2025 17:40:12 +0200
+
+graphviz (12.2.1-1) experimental; urgency=medium
+
+  * New upstream release.
+
+ -- Laszlo Boszormenyi (GCS) <gcs@debian.org>  Tue, 10 Dec 2024 21:26:15 +0100
+
+graphviz (12.2.0-1) experimental; urgency=medium
+
+  * New upstream release.
+
+ -- Laszlo Boszormenyi (GCS) <gcs@debian.org>  Thu, 07 Nov 2024 18:52:12 +0100
+
+graphviz (12.1.2-1) experimental; urgency=medium
+
+  * New upstream release.
+
+ -- Laszlo Boszormenyi (GCS) <gcs@debian.org>  Mon, 30 Sep 2024 21:35:39 +0200
+
+graphviz (12.1.1-1) experimental; urgency=medium
+
+  * New upstream release.
   * Update Standards-Version to 4.7.0 .
 
- -- Laszlo Boszormenyi (GCS) <gcs@debian.org>  Sun, 09 Mar 2025 16:36:00 +0000
+ -- Laszlo Boszormenyi (GCS) <gcs@debian.org>  Wed, 18 Sep 2024 19:49:51 +0200
 
-graphviz (2.42.4-2) unstable; urgency=medium
+graphviz (12.1.0-1) experimental; urgency=medium
 
-  [ Niko Tyni <ntyni@debian.org> ]
-  * Backport upstream fix to suppress compiler warning from qsort() call
-    (closes: #1077399).
+  * New upstream release.
 
- -- Laszlo Boszormenyi (GCS) <gcs@debian.org>  Wed, 07 Aug 2024 16:52:13 +0200
+ -- Laszlo Boszormenyi (GCS) <gcs@debian.org>  Sat, 17 Aug 2024 21:17:07 +0200
 
-graphviz (2.42.4-1) unstable; urgency=medium
+graphviz (12.0.0-1) experimental; urgency=medium
 
-  * New upstream release (closes: #1075904).
-
- -- Laszlo Boszormenyi (GCS) <gcs@debian.org>  Mon, 08 Jul 2024 19:27:13 +0200
-
-graphviz (2.42.2-10) unstable; urgency=medium
-
+  * New major upstream release.
   * Recommend fonts-liberation (closes: #1039981).
-  * Update watch file.
-  * Update Standards-Version to 4.6.2 .
-  * Update debhelper level to 13 .
+  * Do not build rsvg plugin on port architectures (closes: #1067026).
 
- -- Laszlo Boszormenyi (GCS) <gcs@debian.org>  Sat, 06 Jul 2024 19:46:00 +0200
+ -- Laszlo Boszormenyi (GCS) <gcs@debian.org>  Sat, 06 Jul 2024 16:23:35 +0200
 
-graphviz (2.42.2-9) unstable; urgency=medium
+graphviz (11.0.0-1) experimental; urgency=medium
 
-  [ Andrey Rakhmatullin <wrar@debian.org> ]
-  * Fix FTBFS with -Werror=implicit-function-declaration (closes: #1066358).
+  * New major upstream release.
 
- -- Laszlo Boszormenyi (GCS) <gcs@debian.org>  Sat, 16 Mar 2024 11:56:48 +0100
+ -- Laszlo Boszormenyi (GCS) <gcs@debian.org>  Mon, 29 Apr 2024 22:14:59 +0200
 
-graphviz (2.42.2-8) unstable; urgency=medium
+graphviz (10.0.1-1) experimental; urgency=medium
 
-  * Fix CVE-2023-46045: buffer overflow via a crafted config6a file.
+  * New major upstream release:
+    - liblab_gamut library is removed.
 
- -- Laszlo Boszormenyi (GCS) <gcs@debian.org>  Fri, 26 Jan 2024 21:26:42 +0100
+ -- Laszlo Boszormenyi (GCS) <gcs@debian.org>  Mon, 12 Feb 2024 17:12:00 +0100
+
+graphviz (10.0.0~git231218-1) experimental; urgency=medium
+
+  * New major upstream release candidate version.
+
+ -- Laszlo Boszormenyi (GCS) <gcs@debian.org>  Thu, 21 Dec 2023 17:39:11 +0100
+
+graphviz (10.0.0~git231210-1) experimental; urgency=medium
+
+  * New major upstream release candidate version.
+  * Re-set correct time on debian/* files (closes: #1057889).
+
+ -- Laszlo Boszormenyi (GCS) <gcs@debian.org>  Sun, 10 Dec 2023 13:10:49 +0100
+
+graphviz (10.0.0~git231209-1) experimental; urgency=medium
+
+  * New major upstream release candidate version.
+
+ -- Laszlo Boszormenyi (GCS) <gcs@debian.org>  Sat, 09 Dec 2023 22:01:38 +0100
+
+graphviz (10.0.0~git231111-1) experimental; urgency=medium
+
+  * New major upstream release candidate version.
+
+ -- Laszlo Boszormenyi (GCS) <gcs@debian.org>  Sat, 11 Nov 2023 10:02:04 +0100
+
+graphviz (10.0.0~git231105-1) experimental; urgency=medium
+
+  * New major upstream release candidate version.
+
+ -- Laszlo Boszormenyi (GCS) <gcs@debian.org>  Sun, 05 Nov 2023 08:15:09 +0100
+
+graphviz (10.0.0~git231018-1) experimental; urgency=medium
+
+  * New major upstream release candidate version:
+    - the Criterion unit tests have been removed.
+  * Build poppler module.
+  * Disable GDK and GTK modules with smyrna package (closes: #967456).
+  * Make plugins depend on graphviz.
+
+ -- Laszlo Boszormenyi (GCS) <gcs@debian.org>  Sun, 22 Oct 2023 11:06:57 +0200
+
+graphviz (9.0.0-1) experimental; urgency=medium
+
+  * New upstream release.
+  * Rename libgvplugin-vt100{,-dev} packages to libgvplugin-vt{,-dev} ones.
+  * Build ghostscript module.
+  * Package extra graphviz tools separately.
+
+ -- Laszlo Boszormenyi (GCS) <gcs@debian.org>  Tue, 12 Sep 2023 05:45:32 +0000
+
+graphviz (8.1.0-2) experimental; urgency=medium
+
+  * Declare proper relationship with old packages (closes: 1051603).
+  * Build depend on libcriterion-dev on its supported architectures only.
+  * Make graphviz depend on the gd plugin.
+  * Disable dot usage test.
+
+ -- Laszlo Boszormenyi (GCS) <gcs@debian.org>  Sun, 10 Sep 2023 03:40:07 +0000
+
+graphviz (8.1.0-1) experimental; urgency=medium
+
+  * New upstream release (closes: #1012864).
+  * Split package to parts (closes: #755124).
+  * Rename libgv-tcl package to tcl-gv.
+  * Use proper spelling of GTK (closes: #624355).
+  * Build with Lua 5.4 (closes: #1050636).
+
+  [ John Scott <jscott@posteo.net> ]
+  * Update watch file (closes: #980900).
+
+  [ Pino Toscano <pino@debian.org> ]
+  * Remove the Debian menu file (closes: #1017044).
+
+  [ Patrice Duroux <patrice.duroux@gmail.com> ]
+  * Remove patches applied upstream:
+    - fix_out-of-bounds_write_on_invalid_label.patch
+    - update_documentation_link.patch
+  * Remove all manpages and related files, provided by upstream.
+  * Add upstream/metadata.
+
+  [ Helmut Grohne <helmut@subdivi.de> ]
+  * Fix FTCBFS (closes: #1027822):
+    + Multiarchify python build dependencies,
+    + Tell perl about the host development files.
+  * Regenerate config6a from graphviz.postinst using dpkg triggers
+    (closes: #983886).
+
+ -- Laszlo Boszormenyi (GCS) <gcs@debian.org>  Mon, 07 Aug 2023 18:19:33 +0200
 
 graphviz (2.42.2-7) unstable; urgency=medium
 
@@ -438,7 +605,7 @@ graphviz (2.26.3-14) unstable; urgency=low
 graphviz (2.26.3-13) unstable; urgency=low
 
   [ David Claughton ]
-  * Add 'fontfaq.txt' file to graphviz-doc package 
+  * Add 'fontfaq.txt' file to graphviz-doc package
 
   [ Christoph Egger ]
   * Import patch by Steven Chamberlain to fix hangs on kfeebsd (Closes: #701832)
@@ -483,7 +650,7 @@ graphviz (2.26.3-12ubuntu1) quantal; urgency=low
 graphviz (2.26.3-12) unstable; urgency=low
 
   * Fixes to explicitly use ruby 1.8 as default for ruby is now 1.9
-    (Graphviz doesn't currently support ruby 1.9) 
+    (Graphviz doesn't currently support ruby 1.9)
     (Closes: #676098)
 
  -- David Claughton <dave@eclecticdave.com>  Tue, 10 Jul 2012 21:41:24 +0100
@@ -506,7 +673,7 @@ graphviz (2.26.3-11ubuntu1) quantal; urgency=low
 graphviz (2.26.3-11) unstable; urgency=low
 
   * Remove reference to python 2.5 which is no longer available in sid
-    (Closes: #669517) 
+    (Closes: #669517)
 
  -- David Claughton <dave@eclecticdave.com>  Wed, 02 May 2012 21:53:08 +0100
 
@@ -574,7 +741,7 @@ graphviz (2.26.3-6) unstable; urgency=low
   [ David Claughton ]
   * Fix capitalisation of PHP in package description (Closes: #613990)
   * Apply patch by Samuel Thibault to fix problem on Hurd causing
-    doxygen FTBFS bugs - Thanks Samuel! (Closes: #578320) 
+    doxygen FTBFS bugs - Thanks Samuel! (Closes: #578320)
   * Add Python 2.7 support (Closes: #623165). Thanks to Barry Warsaw
     for the patch and Mehdi Dogguy for additional work and testing.
     - Added dh-autoreconf as a Build-Dependency
@@ -651,8 +818,8 @@ graphviz (2.26.3-4) unstable; urgency=low
 
 graphviz (2.26.3-3) unstable; urgency=low
 
-  * Backport fix on CVS for dot -y output (Closes: #573781) 
-  * Restore missing changelog entries which vanished as a result of 
+  * Backport fix on CVS for dot -y output (Closes: #573781)
+  * Restore missing changelog entries which vanished as a result of
     2.26 development being done on a branch
 
  -- David Claughton <dave@eclecticdave.com>  Tue, 16 Mar 2010 21:51:38 +0000
@@ -1628,7 +1795,7 @@ graphviz (2.2-2) unstable; urgency=low
 graphviz (2.2-1) unstable; urgency=low
 
   * New Upstream Version
-  * Moving from non-free to main.  Yeay! 
+  * Moving from non-free to main.  Yeay!
      License is now cpl-1.0 (Closes: Bug#290112)
   * Fixed doc-base files, now simply using top-level index (Closes: Bug#285642)
   * Fixed neato: die with SIGFPE 8 on simple graph (Closes: Bug#270492)
@@ -1663,8 +1830,8 @@ graphviz (1.12-2) unstable; urgency=low
 
   * Adopt NMU... (Closes: Bug#241124, Bug#255982) Thanks Dirk!
   * Split stuff supporting build to -dev package (Closes: Bug#212682)
-    -- this treats differently the work done in 1.12-1 
-  * debian/control: Added Suggests for "msttcorefonts" for 
+    -- this treats differently the work done in 1.12-1
+  * debian/control: Added Suggests for "msttcorefonts" for
     Times font (Closes: Bug#239486).  If writing .png files then you
     may find that you want the Times font as suggested by this bug.
     NOTE: if there is a better package for the Times font, please let
@@ -1685,7 +1852,7 @@ graphviz (1.12-1) unstable; urgency=low
     #212682 also calls for an explicit libgraphviz package.
   * debian/rules: do not muck around among the freshly built libraries
 
-  * debian/control: Updated Build-Depends: "libjpeg62-dev, libpng12-dev, 
+  * debian/control: Updated Build-Depends: "libjpeg62-dev, libpng12-dev,
     libxaw7-dev" instead of unversioned "libjpeg-dev, libpng-dev, libxaw-dev"
   * debian/control: Added Build-Depends "libttf-dev" for Freetype
   * debian/control: Added Build-Depends "libexpat1-dev" for Expat
@@ -1794,8 +1961,8 @@ graphviz (1.7.5-1) unstable; urgency=low
 
   * Remove man3 pages as they are not for end-user and conflict with blt-dev
   * Convert to use freetype6 and remove xaw3dg build-dep (Closes: Bug#90378)
-  * Add Conflicts: with gdtclft pkg (Closes: Bug#90544) 
-    NOTE: this may not be final solution. 90378 proposes alternatives, 
+  * Add Conflicts: with gdtclft pkg (Closes: Bug#90544)
+    NOTE: this may not be final solution. 90378 proposes alternatives,
     still negotiating
   * Directories verified, close fixed-by-NMU (Closes: Bug#76025)
   * Lefty.psp verified, close fixed-by-NMU (Closes: Bug#78511)

@@ -1,4 +1,7 @@
-#include	"dthdr.h"
+#include "config.h"
+
+#include	<cdt/dthdr.h>
+#include	<stddef.h>
 
 /*	Flatten a dictionary into a linked list.
 **	This may be used when many traversals are likely.
@@ -8,15 +11,15 @@
 
 Dtlink_t* dtflatten(Dt_t* dt)
 {
-	reg Dtlink_t	*t, *r, *list, *last, **s, **ends;
+	Dtlink_t	*t, *r, *list, *last, **s, **ends;
 
 	/* already flattened */
-	if(dt->data->type&DT_FLATTEN )
-		return dt->data->here;
+	if (dt->data.type & DT_FLATTEN )
+		return dt->data.here;
 
-	list = last = NIL(Dtlink_t*);
-	if(dt->data->type&(DT_SET|DT_BAG))
-	{	for(ends = (s = dt->data->htab) + dt->data->ntab; s < ends; ++s)
+	list = last = NULL;
+	if (dt->data.type & DT_SET)
+	{	for (ends = (s = dt->data.htab) + dt->data.ntab; s < ends; ++s)
 		{	if((t = *s) )
 			{	if(last)
 					last->right = t;
@@ -27,9 +30,7 @@ Dtlink_t* dtflatten(Dt_t* dt)
 			}
 		}
 	}
-	else if(dt->data->type&(DT_LIST|DT_STACK|DT_QUEUE) )
-		list = dt->data->head;
-	else if((r = dt->data->here) ) /*if(dt->data->type&(DT_OSET|DT_OBAG))*/
+	else if ((r = dt->data.here)) // if (dt->data.type & (DT_OSET|DT_OBAG))
 	{	while((t = r->left) )
 			RROTATE(r,t);
 		for(list = last = r, r = r->right; r; last = r, r = r->right)
@@ -42,8 +43,8 @@ Dtlink_t* dtflatten(Dt_t* dt)
 		}
 	}
 
-	dt->data->here = list;
-	dt->data->type |= DT_FLATTEN;
+	dt->data.here = list;
+	dt->data.type |= DT_FLATTEN;
 
 	return list;
 }

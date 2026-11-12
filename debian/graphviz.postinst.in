@@ -1,0 +1,24 @@
+#!/bin/sh
+set -e
+
+#echo "graphviz.postinst $*"
+
+if test "$1" = configure; then
+	# Remove previous locations of these files such that we never have to
+	# care about these again.
+	if [ -f /usr/lib/graphviz/config6 ]; then
+		rm -f /usr/lib/graphviz/config6
+	fi
+	if [ -f /usr/lib/graphviz/config6a ]; then
+		rm -f /usr/lib/graphviz/config6a
+	fi
+	if [ -f /usr/lib/@TRIPLET@/graphviz/config6a ]; then
+		rm -f /usr/lib/@TRIPLET@/graphviz/config6a
+	fi
+fi
+
+if test "$1" = triggered || test "$1" = configure; then
+	dot -c
+fi
+
+#DEBHELPER#

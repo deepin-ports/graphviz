@@ -9,8 +9,7 @@
 #include <graphviz/gvc.h>
 
 /* set up a graphviz context */
-extern GVC_t *gvNEWcontext(char **info, char *user);
-extern char *gvUsername(void);
+extern GVC_t *gvNEWcontext(const lt_symlist_t *builtins, int demand_loading);
 
 /*  set up a graphviz context \(hy alternative */
 /*     (wraps the above two functions using info built into libgvc) */
@@ -25,6 +24,9 @@ extern int gvLayout(GVC_t *gvc, graph_t *g, char *engine);
 
 /* Compute a layout using layout engine from command line args */
 extern int gvLayoutJobs(GVC_t *gvc, graph_t *g);
+
+/* Check if a layout has been done */
+extern bool gvLayoutDone(graph_t *g);
 
 /* Render layout into string attributes of the graph */
 extern void attach_attrs(graph_t *g);
@@ -56,14 +58,14 @@ extern char** gvPluginList(GVC_t *gvc, char* kind, int* cnt, char*);
 .fi
 .SH DESCRIPTION
 \fIlibgvc\fP provides a context for applications wishing to manipulate
-and render graphs.  It provides a command line parsing, common rendering code,
+and render graphs.  It provides command line parsing, common rendering code,
 and a plugin mechanism for renderers.
 
 .SH SEE ALSO
 .BR dot (1),
 .BR neato (1),
-.BR libcdt (3)
-.BR libgraph (3)
+.BR cdt (3),
+.BR cgraph (3)
 .br
 
 .SH AUTHOR

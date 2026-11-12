@@ -1,4 +1,7 @@
-#include	"dthdr.h"
+#include "config.h"
+
+#include	<cdt/dthdr.h>
+#include	<stdlib.h>
 
 /*	Ordered set/multiset
 **	dt:	dictionary being searched
@@ -14,18 +17,16 @@ static void* dttree(Dt_t* dt, void* obj, int type)
 	int		cmp, lk, sz, ky;
 	void		*o, *k, *key;
 	Dtlink_t	*l, *r, *me = NULL, link;
-	int		n, minp, turn[DT_MINP];
 	Dtcompar_f	cmpf;
 	Dtdisc_t*	disc;
 
 	UNFLATTEN(dt);
 	disc = dt->disc; _DTDSC(disc,ky,sz,lk,cmpf);
-	dt->type &= ~DT_FOUND;
 
-	root = dt->data->here;
+	root = dt->data.here;
 	if(!obj)
 	{	if(!root || !(type&(DT_CLEAR|DT_FIRST|DT_LAST)) )
-			return NIL(void*);
+			return NULL;
 
 		if(type&DT_CLEAR) /* delete all objects */
 		{	if(disc->freef || disc->link < 0)
@@ -34,15 +35,15 @@ static void* dttree(Dt_t* dt, void* obj, int type)
 						RROTATE(root,t);
 					t = root->right;
 					if(disc->freef)
-						(*disc->freef)(dt,_DTOBJ(root,lk),disc);
+						disc->freef(_DTOBJ(root, lk));
 					if(disc->link < 0)
-						(*dt->memoryf)(dt,(void*)root,0,disc);
+						free(root);
 				} while((root = t) );
 			}
 
-			dt->data->size = 0;
-			dt->data->here = NIL(Dtlink_t*);
-			return NIL(void*);
+			dt->data.size = 0;
+			dt->data.here = NULL;
+			return NULL;
 		}
 		else /* computing largest/smallest element */
 		{	if(type&DT_LAST)
@@ -54,7 +55,7 @@ static void* dttree(Dt_t* dt, void* obj, int type)
 					RROTATE(root,t);
 			}
 
-			dt->data->here = root;
+			dt->data.here = root;
 			return _DTOBJ(root,lk);
 		}
 	}
@@ -67,10 +68,10 @@ static void* dttree(Dt_t* dt, void* obj, int type)
 	{	key = _DTKEY(obj,ky,sz);
 		for(o = dtsearch(dt,obj); o; o = dtnext(dt,o) )
 		{	k = _DTKEY(o,ky,sz);
-			if(_DTCMP(dt,key,k,disc,cmpf,sz) != 0)
+			if(_DTCMP(key, k, cmpf, sz) != 0)
 				break;
 			if(o == obj)
-			{	root = dt->data->here;
+			{	root = dt->data.here;
 				l->right = root->left;
 				r->left  = root->right;
 				goto dt_delete;
@@ -78,13 +79,13 @@ static void* dttree(Dt_t* dt, void* obj, int type)
 		}
 	}
 
-	if(type&(DT_MATCH|DT_SEARCH|DT_INSERT|DT_ATTACH))
+	if(type&(DT_MATCH|DT_SEARCH|DT_INSERT))
 	{	key = (type&DT_MATCH) ? obj : _DTKEY(obj,ky,sz);
 		if(root)
 			goto do_search;
 	}
 	else if(type&DT_RENEW)
-	{	me = (Dtlink_t*)obj;
+	{	me = obj;
 		obj = _DTOBJ(me,lk);
 		key = _DTKEY(obj,ky,sz);
 		if(root)
@@ -93,59 +94,14 @@ static void* dttree(Dt_t* dt, void* obj, int type)
 	else if(root && _DTOBJ(root,lk) != obj)
 	{	key = _DTKEY(obj,ky,sz);
 	do_search:
-		if(dt->meth->type == DT_OSET &&
-		   (minp = dt->data->minp) != 0 && (type&(DT_MATCH|DT_SEARCH)) )
-		{	/* simple search, note that minp should be even */
-			for(t = root, n = 0; n < minp; ++n)
-			{	k = _DTOBJ(t,lk); k = _DTKEY(k,ky,sz);
-				if((cmp = _DTCMP(dt,key,k,disc,cmpf,sz)) == 0)
-					return _DTOBJ(t,lk);
-				else
-				{	turn[n] = cmp;	
-					if(!(t = cmp < 0 ? t->left : t->right) )
-						return NIL(void*);
-				}
-			}
-
-			/* exceed search length, top-down splay now */
-			for(n = 0; n < minp; n += 2)
-			{	if(turn[n] < 0)
-				{	t = root->left;
-					if(turn[n+1] < 0)
-					{	rrotate(root,t);
-						rlink(r,t);
-						root = t->left;
-					}
-					else
-					{	llink(l,t);
-						rlink(r,root);
-						root = t->right;
-					}
-				}
-				else
-				{	t = root->right;
-					if(turn[n+1] > 0)
-					{	lrotate(root,t);
-						llink(l,t);
-						root = t->right;
-					}
-					else
-					{	rlink(r,t);
-						llink(l,root);
-						root = t->left;
-					}
-				}
-			}
-		}
-
 		while(1)
 		{	k = _DTOBJ(root,lk); k = _DTKEY(k,ky,sz);
-			if((cmp = _DTCMP(dt,key,k,disc,cmpf,sz)) == 0)
+			if((cmp = _DTCMP(key, k, cmpf, sz)) == 0)
 				break;
 			else if(cmp < 0)
 			{	if((t = root->left) )
 				{	k = _DTOBJ(t,lk); k = _DTKEY(k,ky,sz);
-					if((cmp = _DTCMP(dt,key,k,disc,cmpf,sz)) < 0)
+					if((cmp = _DTCMP(key, k, cmpf, sz)) < 0)
 					{	rrotate(root,t);
 						rlink(r,t);
 						if(!(root = t->left) )
@@ -165,14 +121,14 @@ static void* dttree(Dt_t* dt, void* obj, int type)
 				}
 				else
 				{	rlink(r,root);
-					root = NIL(Dtlink_t*);
+					root = NULL;
 					break;
 				}
 			}
 			else /* if(cmp > 0) */
 			{	if((t = root->right) )
 				{	k = _DTOBJ(t,lk); k = _DTKEY(k,ky,sz);
-					if((cmp = _DTCMP(dt,key,k,disc,cmpf,sz)) > 0)
+					if((cmp = _DTCMP(key, k, cmpf, sz)) > 0)
 					{	lrotate(root,t);
 						llink(l,t);
 						if(!(root = t->right) )
@@ -192,7 +148,7 @@ static void* dttree(Dt_t* dt, void* obj, int type)
 				}
 				else
 				{	llink(l,root);
-					root = NIL(Dtlink_t*);
+					root = NULL;
 					break;
 				}
 			}
@@ -201,7 +157,6 @@ static void* dttree(Dt_t* dt, void* obj, int type)
 
 	if(root)
 	{	/* found it, now isolate it */
-		dt->type |= DT_FOUND;
 		l->right = root->left;
 		r->left = root->right;
 
@@ -219,17 +174,17 @@ static void* dttree(Dt_t* dt, void* obj, int type)
 
 					/* now see if it's in the same group */
 					k = _DTOBJ(t,lk); k = _DTKEY(k,ky,sz);
-					if(_DTCMP(dt,key,k,disc,cmpf,sz) != 0)
+					if(_DTCMP(key, k, cmpf, sz) != 0)
 						break;
 					RROTATE(root,t);
 				}
 			}
-			dt->data->here = root;
+			dt->data.here = root;
 			return _DTOBJ(root,lk);
 		}
 		else if(type&DT_NEXT)
 		{	root->left = link.right;
-			root->right = NIL(Dtlink_t*);
+			root->right = NULL;
 			link.right = root;
 		dt_next:
 			if((root = link.left) )	
@@ -242,7 +197,7 @@ static void* dttree(Dt_t* dt, void* obj, int type)
 		}
 		else if(type&DT_PREV)
 		{	root->right = link.left;
-			root->left = NIL(Dtlink_t*);
+			root->left = NULL;
 			link.left = root;
 		dt_prev:
 			if((root = link.right) )
@@ -258,18 +213,18 @@ static void* dttree(Dt_t* dt, void* obj, int type)
 		dt_delete:
 			obj = _DTOBJ(root,lk);
 			if(disc->freef && (type&DT_DELETE))
-				(*disc->freef)(dt,obj,disc);
+				disc->freef(obj);
 			if(disc->link < 0)
-				(*dt->memoryf)(dt,(void*)root,0,disc);
-			if((dt->data->size -= 1) < 0)
-				dt->data->size = -1;
+				free(root);
+			if (--dt->data.size < 0)
+				--dt->data.size;
 			goto no_root;
 		}
-		else if(type&(DT_INSERT|DT_ATTACH))
+		else if(type&DT_INSERT)
 		{	if(dt->meth->type&DT_OSET)
 				goto has_root;
 			else
-			{	root->left = NIL(Dtlink_t*);
+			{	root->left = NULL;
 				root->right = link.left;
 				link.left = root;
 				goto dt_insert;
@@ -278,23 +233,23 @@ static void* dttree(Dt_t* dt, void* obj, int type)
 		else if(type&DT_RENEW) /* a duplicate */
 		{	if(dt->meth->type&DT_OSET)
 			{	if(disc->freef)
-					(*disc->freef)(dt,obj,disc);
+					disc->freef(obj);
 				if(disc->link < 0)
-					(*dt->memoryf)(dt,(void*)me,0,disc);
+					free(me);
 			}
 			else
-			{	me->left = NIL(Dtlink_t*);
+			{	me->left = NULL;
 				me->right = link.left;
 				link.left = me;
-				dt->data->size += 1;
+				++dt->data.size;
 			}
 			goto has_root;
 		}
 	}
 	else
 	{	/* not found, finish up LEFT and RIGHT trees */
-		r->left = NIL(Dtlink_t*);
-		l->right = NIL(Dtlink_t*);
+		r->left = NULL;
+		l->right = NULL;
 
 		if(type&DT_NEXT)
 			goto dt_next;
@@ -305,59 +260,51 @@ static void* dttree(Dt_t* dt, void* obj, int type)
 			while((t = r->left) )
 				r = t;
 			r->left = link.right;
-			dt->data->here = link.left;
-			return (type&DT_DELETE) ? obj : NIL(void*);
+			dt->data.here = link.left;
+			return (type&DT_DELETE) ? obj : NULL;
 		}
-		else if(type&(DT_INSERT|DT_ATTACH))
+		else if(type&DT_INSERT)
 		{ dt_insert:
 			if(disc->makef && (type&DT_INSERT))
-				obj = (*disc->makef)(dt,obj,disc);
+				obj = disc->makef(obj, disc);
 			if(obj)
 			{	if(lk >= 0)
 					root = _DTLNK(obj,lk);
 				else
-				{	root = (Dtlink_t*)(*dt->memoryf)
-						(dt,NIL(void*),sizeof(Dthold_t),disc);
+				{	root = malloc(sizeof(Dthold_t));
 					if(root)
 						((Dthold_t*)root)->obj = obj;
 					else if(disc->makef && disc->freef &&
 						(type&DT_INSERT))
-						(*disc->freef)(dt,obj,disc);
+						disc->freef(obj);
 				}
 			}
 			if(root)
-			{	if(dt->data->size >= 0)
-					dt->data->size += 1;
+			{	if (dt->data.size >= 0)
+					++dt->data.size;
 				goto has_root;
 			}
 			else	goto no_root;
 		}
 		else if(type&DT_RENEW)
 		{	root = me;
-			dt->data->size += 1;
+			++dt->data.size;
 			goto has_root;
 		}
 		else /*if(type&DT_DELETE)*/
-		{	obj = NIL(void*);
+		{	obj = NULL;
 			goto no_root;
 		}
 	}
 
-	return NIL(void*);
+	return NULL;
 }
 
 /* make this method available */
-static Dtmethod_t	_Dtoset =  { dttree, DT_OSET };
-static Dtmethod_t	_Dtobag =  { dttree, DT_OBAG };
-Dtmethod_t* Dtoset = &_Dtoset;
-Dtmethod_t* Dtobag = &_Dtobag;
+static Dtmethod_t	Dtoset_ =  { dttree, DT_OSET };
+static Dtmethod_t	Dtobag_ =  { dttree, DT_OBAG };
+Dtmethod_t* Dtoset = &Dtoset_;
+Dtmethod_t* Dtobag = &Dtobag_;
 
-#ifndef KPVDEL /* backward compatibility - delete next time around */
-Dtmethod_t		_Dttree = { dttree, DT_OSET };
-Dtmethod_t* Dtorder = &_Dttree;
-Dtmethod_t* Dttree = &_Dttree;
-#endif
-
-#ifdef NoF
-NoF(dttree)
-#endif
+static Dtmethod_t Dttree_ = { dttree, DT_OSET };
+Dtmethod_t* Dttree = &Dttree_;

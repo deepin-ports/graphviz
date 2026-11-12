@@ -1,18 +1,14 @@
-/* $Id$ $Revision$ */
-/* vim:set shiftwidth=4 ts=8: */
-
 /*************************************************************************
  * Copyright (c) 2011 AT&T Intellectual Property 
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
- * http://www.eclipse.org/legal/epl-v10.html
+ * https://www.eclipse.org/legal/epl-v10.html
  *
- * Contributors: See CVS logs. Details at http://www.graphviz.org/
+ * Contributors: Details at https://graphviz.org
  *************************************************************************/
 
-#ifndef GVPLUGIN_QUARTZ_H
-#define GVPLUGIN_QUARTZ_H
+#pragma once
 
 #include <Availability.h>
 
@@ -45,9 +41,7 @@ typedef enum {
 	FORMAT_TGA
 } format_type;
 
-static const int BYTE_ALIGN = 15;			/* align to 16 bytes */
 static const int BITS_PER_COMPONENT = 8;	/* bits per color component */
-static const int BYTES_PER_PIXEL = 4;		/* bytes per pixel */
 
 #if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ >= 1040 || __ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__ >= 40000
 CFStringRef format_to_uti(format_type format);
@@ -65,6 +59,4 @@ void quartz_free_layout(void *layout);
 
 #ifdef __cplusplus
 }
-#endif
-
 #endif

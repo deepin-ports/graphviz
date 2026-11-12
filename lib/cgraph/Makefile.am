@@ -1,58 +1,48 @@
-# $Id$ $Revision$
 ## Process this file with automake to produce Makefile.in
 
-CGRAPH_VERSION="6:0:0"
+CGRAPH_VERSION = "8:5:0"
 
-pdfdir = $(pkgdatadir)/doc/pdf
-pkgconfigdir = $(libdir)/pkgconfig
+AM_CPPFLAGS = -I$(top_srcdir)/lib -I$(top_srcdir)/lib/cdt
 
-AM_CPPFLAGS = \
-	-I$(top_srcdir) \
-	-I$(top_srcdir)/lib/cdt
+if WITH_WIN32
+AM_CFLAGS = -DEXPORT_CGRAPH -DEXPORT_CGHDR
+endif
 
 pkginclude_HEADERS = cgraph.h
-noinst_HEADERS = agxbuf.h cghdr.h malloc.h
+noinst_HEADERS = agstrcanon.h cghdr.h ingraphs.h node_set.h rdr.h
 noinst_LTLIBRARIES = libcgraph_C.la
 lib_LTLIBRARIES = libcgraph.la
 pkgconfig_DATA = libcgraph.pc
-man_MANS = cgraph.3
+dist_man_MANS = cgraph.3
+if ENABLE_MAN_PDFS
 pdf_DATA = cgraph.3.pdf
+endif
 
-libcgraph_C_la_SOURCES = agerror.c agxbuf.c apply.c attr.c edge.c \
-	flatten.c graph.c grammar.y id.c imap.c io.c mem.c node.c \
-	obj.c pend.c rec.c refstr.c scan.l subg.c utils.c write.c
+libcgraph_C_la_SOURCES = acyclic.c agerror.c apply.c attr.c edge.c \
+	graph.c grammar.y id.c imap.c ingraphs.c io.c node.c node_induce.c \
+	obj.c rec.c refstr.c scan.l subg.c tred.c unflatten.c utils.c write.c
 
 libcgraph_la_LDFLAGS = -version-info $(CGRAPH_VERSION) -no-undefined
 libcgraph_la_SOURCES = $(libcgraph_C_la_SOURCES)
-libcgraph_la_LIBADD = $(top_builddir)/lib/cdt/libcdt.la
+libcgraph_la_LIBADD = \
+  $(top_builddir)/lib/cdt/libcdt.la \
+  $(top_builddir)/lib/util/libutil_C.la
 
-scan.o scan.lo: scan.c grammar.h
+scan.$(OBJEXT) scan.lo: scan.c grammar.h
 
 scan.c: $(top_srcdir)/lib/cgraph/scan.l
-	@LEX@ -i $(top_srcdir)/lib/cgraph/scan.l
-	@SED@ "s/yy/aag/g" < @LEX_OUTPUT_ROOT@.c | @SED@ '/extern.*isatty/d' > scan.c
-	rm @LEX_OUTPUT_ROOT@.c
+	$(LEX) --case-insensitive --outfile=$@ $(top_srcdir)/lib/cgraph/scan.l
 
-grammar.c: y.tab.c
-	@SED@ "s/yy/aag/g" < y.tab.c | \
-		@SED@ "s/unsigned long int/uint64_t/g" | \
-                @SED@ "s/unsigned long/uint64_t/g" > grammar.c
+grammar.c grammar.h: $(top_srcdir)/lib/cgraph/grammar.y
+	$(YACC) -Wno-yacc -dv --output=grammar.c $(top_srcdir)/lib/cgraph/grammar.y
 
-grammar.h: y.tab.h
-	@SED@ "s/yy/aag/g" < y.tab.h | \
-		@SED@ "s/unsigned long int/uint64_t/g" | \
-                @SED@ "s/unsigned long/uint64_t/g" > grammar.h
+.3.3.pdf:
+	rm -f $@; pdffile=$@; psfile=$${pdffile%pdf}ps; \
+	$(GROFF) -Tps -man $< > $$psfile || { rm -f $$psfile; exit 1; }; \
+	$(PS2PDF) $$psfile && rm -f $$psfile || { rm -f $$psfile; exit 1; }
+SUFFIXES = .3 .3.pdf
 
-y.tab.c y.tab.h: y.output
+EXTRA_DIST = \
+	grammar.c grammar.h scan.c
 
-y.output: $(top_srcdir)/lib/cgraph/grammar.y
-	@YACC@ -dv $(top_srcdir)/lib/cgraph/grammar.y
-
-cgraph.3.pdf: $(srcdir)/cgraph.3
-	- @GROFF@ -Tps -man $(srcdir)/cgraph.3 | @PS2PDF@ - - >cgraph.3.pdf
-
-EXTRA_DIST = $(man_MANS) $(pdf_DATA) cmpnd.c \
-	main.c tester.c grammar.c grammar.h scan.c \
-	y.tab.c y.tab.h y.output cgraph.vcxproj*
-
-DISTCLEANFILES = $(pdf_DATA) grammar.[ch] scan.c y.output y.tab.[ch]
+DISTCLEANFILES = grammar.[ch] scan.c $(pdf_DATA)

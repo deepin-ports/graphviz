@@ -1,121 +1,104 @@
-/* $Id$ $Revision$ */
-/* vim:set shiftwidth=4 ts=8: */
-
 /*************************************************************************
  * Copyright (c) 2011 AT&T Intellectual Property 
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
- * http://www.eclipse.org/legal/epl-v10.html
+ * https://www.eclipse.org/legal/epl-v10.html
  *
- * Contributors: See CVS logs. Details at http://www.graphviz.org/
+ * Contributors: Details at https://graphviz.org
  *************************************************************************/
 
-#include "mem.h"
-#include "geometry.h"
-#include "edges.h"
-#include "hedges.h"
-#include "heap.h"
-#include "voronoi.h"
+#include "config.h"
 
+#include <neatogen/geometry.h>
+#include <neatogen/edges.h>
+#include <neatogen/hedges.h>
+#include <neatogen/heap.h>
+#include <neatogen/voronoi.h>
+#include <util/gv_math.h>
+#include <util/list.h>
 
-void voronoi(int triangulate, Site * (*nextsite) (void))
-{
-    Site *newsite, *bot, *top, *temp, *p;
+void voronoi(Site *(*nextsite)(void *context), void *context) {
+    Site *newsite, *bot, *top, *p;
     Site *v;
     Point newintstar = {0};
     char pm;
     Halfedge *lbnd, *rbnd, *llbnd, *rrbnd, *bisector;
     Edge *e;
 
-    edgeinit();
-    siteinit();
-    PQinitialize();
-    bottomsite = (*nextsite) ();
-#ifdef STANDALONE
-    out_site(bottomsite);
-#endif
-    ELinitialize();
+    pq_t *pq = PQinitialize();
+    bottomsite = nextsite(context);
+    el_state_t st = {0};
+    ELinitialize(&st);
 
-    newsite = (*nextsite) ();
+    newsite = nextsite(context);
     while (1) {
-	if (!PQempty())
-	    newintstar = PQ_min();
+	if (!PQempty(pq))
+	    newintstar = PQ_min(pq);
 
-	if (newsite != (struct Site *) NULL && (PQempty()
-						|| newsite->coord.y <
-						newintstar.y
-						|| (newsite->coord.y ==
-						    newintstar.y
-						    && newsite->coord.x <
-						    newintstar.x))) {
+	if (newsite != NULL &&
+      (PQempty(pq) || newsite->coord.y < newintstar.y ||
+       (newsite->coord.y ==newintstar.y && newsite->coord.x < newintstar.x))) {
 	    /* new site is smallest */
-#ifdef STANDALONE
-	    out_site(newsite);
-#endif
-	    lbnd = ELleftbnd(&(newsite->coord));
+	    lbnd = ELleftbnd(&st, &newsite->coord);
 	    rbnd = ELright(lbnd);
 	    bot = rightreg(lbnd);
-	    e = gvbisect(bot, newsite);
-	    bisector = HEcreate(e, le);
+	    e = gvbisect(bot, newsite, &st.allocated);
+	    bisector = HEcreate(&st, e, le);
 	    ELinsert(lbnd, bisector);
-	    if ((p = hintersect(lbnd, bisector)) != (struct Site *) NULL) {
-		PQdelete(lbnd);
-		PQinsert(lbnd, p, dist(p, newsite));
+	    if ((p = hintersect(lbnd, bisector, &st.allocated)) != NULL) {
+		PQdelete(pq, lbnd);
+		PQinsert(pq, lbnd, p, ngdist(p, newsite));
 	    }
 	    lbnd = bisector;
-	    bisector = HEcreate(e, re);
+	    bisector = HEcreate(&st, e, re);
 	    ELinsert(lbnd, bisector);
-	    if ((p = hintersect(bisector, rbnd)) != (struct Site *) NULL)
-		PQinsert(bisector, p, dist(p, newsite));
-	    newsite = (*nextsite) ();
-	} else if (!PQempty()) {
+	    if ((p = hintersect(bisector, rbnd, &st.allocated)) != NULL)
+		PQinsert(pq, bisector, p, ngdist(p, newsite));
+	    newsite = nextsite(context);
+	} else if (!PQempty(pq)) {
 	    /* intersection is smallest */
-	    lbnd = PQextractmin();
+	    lbnd = PQextractmin(pq);
 	    llbnd = ELleft(lbnd);
 	    rbnd = ELright(lbnd);
 	    rrbnd = ELright(rbnd);
 	    bot = leftreg(lbnd);
 	    top = rightreg(rbnd);
-#ifdef STANDALONE
-	    out_triple(bot, top, rightreg(lbnd));
-#endif
 	    v = lbnd->vertex;
-	    makevertex(v);
-	    endpoint(lbnd->ELedge, lbnd->ELpm, v);
-	    endpoint(rbnd->ELedge, rbnd->ELpm, v);
+	    endpoint(lbnd->ELedge, lbnd->ELpm, v, &st.allocated);
+	    endpoint(rbnd->ELedge, rbnd->ELpm, v, &st.allocated);
 	    ELdelete(lbnd);
-	    PQdelete(rbnd);
+	    PQdelete(pq, rbnd);
 	    ELdelete(rbnd);
 	    pm = le;
 	    if (bot->coord.y > top->coord.y) {
-		temp = bot;
-		bot = top;
-		top = temp;
+		SWAP(&bot, &top);
 		pm = re;
 	    }
-	    e = gvbisect(bot, top);
-	    bisector = HEcreate(e, pm);
+	    e = gvbisect(bot, top, &st.allocated);
+	    bisector = HEcreate(&st, e, pm);
 	    ELinsert(llbnd, bisector);
-	    endpoint(e, re - pm, v);
-	    deref(v);
-	    if ((p = hintersect(llbnd, bisector)) != (struct Site *) NULL) {
-		PQdelete(llbnd);
-		PQinsert(llbnd, p, dist(p, bot));
+	    endpoint(e, re - pm, v, &st.allocated);
+	    if ((p = hintersect(llbnd, bisector, &st.allocated)) != NULL) {
+		PQdelete(pq, llbnd);
+		PQinsert(pq, llbnd, p, ngdist(p, bot));
 	    }
-	    if ((p = hintersect(bisector, rrbnd)) != (struct Site *) NULL) {
-		PQinsert(bisector, p, dist(p, bot));
+	    if ((p = hintersect(bisector, rrbnd, &st.allocated)) != NULL) {
+		PQinsert(pq, bisector, p, ngdist(p, bot));
 	    }
 	} else
 	    break;
     }
 
-    for (lbnd = ELright(ELleftend); lbnd != ELrightend;
-	 lbnd = ELright(lbnd)) {
+    for (lbnd = ELright(st.leftend); lbnd != st.rightend;
+         lbnd = ELright(lbnd)) {
 	e = lbnd->ELedge;
 	clip_line(e);
-#ifdef STANDALONE
-	out_ep(e);
-#endif
     }
+
+    ELcleanup(&st);
+
+    // `PQcleanup` relies on the number of sites, so should be discarded and
+    // at least every time we use `vAdjust`. See note in adjust.c:cleanup().
+    PQcleanup(pq);
 }

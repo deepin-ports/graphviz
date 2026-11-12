@@ -1,20 +1,16 @@
-/* $Id$ $Revision$ */
-/* vim:set shiftwidth=4 ts=8: */
-
 /*************************************************************************
  * Copyright (c) 2011 AT&T Intellectual Property 
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
- * http://www.eclipse.org/legal/epl-v10.html
+ * https://www.eclipse.org/legal/epl-v10.html
  *
- * Contributors: See CVS logs. Details at http://www.graphviz.org/
+ * Contributors: Details at https://graphviz.org
  *************************************************************************/
 
 /* Common header used by both clients and plugins */
 
-#ifndef GVCINT_H
-#define GVCINT_H
+#pragma once
 
 #ifdef __cplusplus
 extern "C" {
@@ -23,7 +19,21 @@ extern "C" {
 #include "cdt.h"
 #include "gvcommon.h"
 #include "gvcjob.h"
+#include "gvplugin.h"
 #include "color.h"
+#include <stdbool.h>
+
+#ifdef GVDLL
+#ifdef GVC_EXPORTS
+#define GVCINT_API __declspec(dllexport)
+#else
+#define GVCINT_API __declspec(dllimport)
+#endif
+#endif
+
+#ifndef GVCINT_API
+#define GVCINT_API /* nothing */
+#endif
 
     /* active plugin headers */
     typedef struct gvplugin_active_layout_s {
@@ -49,7 +59,7 @@ extern "C" {
 
     struct gvplugin_available_s {
 	gvplugin_available_t *next;     /* next plugin in linked list, or NULL */
-	const char *typestr;		/* type string, e.g. "png" or "ps" */
+	char *typestr;		/* type string, e.g. "png" or "ps" */
 	int quality;			/* Programmer assigned quality ranking within type (+ve or -ve int).
 					First implementation of type should be given "0" quality */
 	gvplugin_package_t *package;	/* details of library containing plugin */
@@ -72,10 +82,11 @@ extern "C" {
 	GVCOMMON_t common;
 
 	char *config_path;
-	boolean config_found;
+	bool config_found;
 
 	/* gvParseArgs */
 	char **input_filenames; /* null terminated array of input filenames */
+	int fidx; /* index of input_filenames to be processed next */
 
 	/* gvNextInputGraph() */
 	GVG_t *gvgs;	/* linked list of graphs */
@@ -120,7 +131,7 @@ extern "C" {
 	point pb;		/* page size - including margins (inches) */
 	boxf bb;		/* graph bb in graph units, not including margins */
 	int rotation;		/* rotation - 0 = portrait, 90 = landscape */
-	boolean graph_sets_pad, graph_sets_margin, graph_sets_pageSize, graph_sets_rotation;
+	bool graph_sets_pad, graph_sets_margin, graph_sets_pageSize;
 
 	/* layers */
 	char *layerDelims;	/* delimiters in layer names */
@@ -144,16 +155,11 @@ extern "C" {
 	int fontrenaming;
     };
 
-extern GVC_t* gvCloneGVC (GVC_t *);
-extern void gvFreeCloneGVC (GVC_t *);
+GVCINT_API GVC_t* gvCloneGVC (GVC_t *);
+GVCINT_API void gvFreeCloneGVC (GVC_t *);
 
-#ifdef _WIN32
-#define DIRSEP "\\"
-#else
-#define DIRSEP "/"
-#endif
+#undef GVCINT_API
 
 #ifdef __cplusplus
 }
 #endif
-#endif				/* GVCINT_H */

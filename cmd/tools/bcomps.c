@@ -1,14 +1,16 @@
-/* $Id$ $Revision$ */
-/* vim:set shiftwidth=4 ts=8: */
+/**
+ * @file
+ * @brief biconnected components filter for graphs
+ */
 
 /*************************************************************************
  * Copyright (c) 2011 AT&T Intellectual Property 
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
- * http://www.eclipse.org/legal/epl-v10.html
+ * https://www.eclipse.org/legal/epl-v10.html
  *
- * Contributors: See CVS logs. Details at http://www.graphviz.org/
+ * Contributors: Details at https://graphviz.org
  *************************************************************************/
 
 
@@ -19,13 +21,21 @@
  */
 #include "config.h"
 
+#include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
 #include <assert.h>
 #include <getopt.h>
 
 #include <stdlib.h>
-#include "cgraph.h"
+#include <cgraph/cgraph.h>
+#include <cgraph/ingraphs.h>
+#include <util/agxbuf.h>
+#include <util/alloc.h>
+#include <util/exit.h>
+#include <util/gv_math.h>
+#include <util/list.h>
+#include <util/unreachable.h>
 
 typedef struct {
     Agrec_t h;
@@ -34,7 +44,6 @@ typedef struct {
 
 typedef struct {
     Agrec_t h;
-    Agedge_t *next;
 } Agedgeinfo_t;
 
 typedef struct {
@@ -47,12 +56,7 @@ typedef struct {
 #define Low(n)  (((Agnodeinfo_t*)(n->base.data))->low)
 #define Cut(n)  (((Agnodeinfo_t*)(n->base.data))->isCut)
 #define N(n)  (((Agnodeinfo_t*)(n->base.data))->val)
-#define NEXT(e)  (((Agedgeinfo_t*)(e->base.data))->next)
 #define NEXTBLK(g)  (((Agraphinfo_t*)(g->base.data))->next)
-
-#include "ingraphs.h"
-
-#define min(a,b) ((a) < (b) ? (a) :  (b))
 
 char **Files;
 int verbose;
@@ -63,48 +67,19 @@ char *suffix = 0;
 int external;			/* emit blocks as root graphs */
 int doTree;			/* emit block-cutpoint tree */
 
-static void push(Agedge_t ** sp, Agedge_t * e)
-{
-    NEXT(e) = *sp;
-    *sp = e;
-}
-
-static Agedge_t *pop(Agedge_t ** sp)
-{
-    Agedge_t *top = *sp;
-
-    assert(top);
-    *sp = NEXT(top);
-    return top;
-}
-
-#define top(sp) (sp)
-
 typedef struct {
     int count;
     int nComp;
-    Agedge_t *stk;
+    LIST(Agedge_t *) stk;
     Agraph_t *blks;
 } bcstate;
 
-static char *blockName(char *gname, int d)
-{
-    static char *buf;
-    static int bufsz;
-    int sz;
-
-    sz = strlen(gname) + 128;
-    if (sz > bufsz) {
-	if (buf)
-	    free(buf);
-	buf = (char *) malloc(sz);
-    }
-
+static char *blockName(agxbuf *xb, char *gname, int d) {
     if (*gname == '%') /* anonymous graph */
-	sprintf(buf, "_%s_bcc_%d", gname, d);
+	agxbprint(xb, "_%s_bcc_%d", gname, d);
     else
-	sprintf(buf, "%s_bcc_%d", gname, d);
-    return buf;
+	agxbprint(xb, "%s_bcc_%d", gname, d);
+    return agxbuse(xb);
 }
 
 /* getName:
@@ -115,31 +90,24 @@ static char *blockName(char *gname, int d)
  */
 static char *getName(int ng, int nb)
 {
-    char *name;
-    static char *buf;
-    int sz;
+    agxbuf name = {0};
 
-    if ((ng == 0) && (nb == 0))
-	name = outfile;
+    if (ng == 0 && nb == 0)
+	agxbput(&name, outfile);
     else {
-	if (!buf) {
-	    sz = strlen(outfile) + 100;	/* enough to handle '_<g>_<b>' */
-	    buf = (char *) malloc(sz);
-	}
 	if (suffix) {
 	    if (nb < 0)
-		sprintf(buf, "%s_%d_T.%s", path, ng, suffix);
+		agxbprint(&name, "%s_%d_T.%s", path, ng, suffix);
 	    else
-		sprintf(buf, "%s_%d_%d.%s", path, ng, nb, suffix);
+		agxbprint(&name, "%s_%d_%d.%s", path, ng, nb, suffix);
 	} else {
 	    if (nb < 0)
-		sprintf(buf, "%s_%d_T", path, ng);
+		agxbprint(&name, "%s_%d_T", path, ng);
 	    else
-		sprintf(buf, "%s_%d_%d", path, ng, nb);
+		agxbprint(&name, "%s_%d_%d", path, ng, nb);
 	}
-	name = buf;
     }
-    return name;
+    return agxbdisown(&name);
 }
 
 static void gwrite(Agraph_t * g, int ng, int nb)
@@ -158,8 +126,10 @@ static void gwrite(Agraph_t * g, int ng, int nb)
 	if (!outf) {
 	    fprintf(stderr, "Could not open %s for writing\n", name);
 	    perror("bcomps");
-	    exit(1);
+	    free(name);
+	    graphviz_exit(1);
 	}
+	free(name);
 	agwrite(g, outf);
 	fclose(outf);
     }
@@ -170,8 +140,10 @@ static Agraph_t *mkBlock(Agraph_t * g, bcstate * stp)
     Agraph_t *sg;
 
     stp->nComp++;
-    sg = agsubg(g, blockName(agnameof(g), stp->nComp), 1);
-    agbindrec(sg, "info", sizeof(Agraphinfo_t), TRUE);
+    agxbuf xb = {0};
+    sg = agsubg(g, blockName(&xb, agnameof(g), stp->nComp), 1);
+    agxbfree(&xb);
+    agbindrec(sg, "info", sizeof(Agraphinfo_t), true);
     NEXTBLK(sg) = stp->blks;
     stp->blks = sg;
     return sg;
@@ -193,36 +165,22 @@ dfs(Agraph_t * g, Agnode_t * u, bcstate * stp, Agnode_t * parent)
 	if (v == u)
 	    continue;
 	if (N(v) == 0) {
-	    push(&stp->stk, e);
+	    LIST_PUSH_BACK(&stp->stk, e);
 	    dfs(g, v, stp, u);
-	    Low(u) = min(Low(u), Low(v));
+	    Low(u) = imin(Low(u), Low(v));
 	    if (Low(v) >= N(u)) {	/* u is an articulation point */
 		Cut(u) = 1;
 		sg = mkBlock(g, stp);
 		do {
-		    ep = pop(&stp->stk);
+		    ep = LIST_POP_BACK(&stp->stk);
 		    agsubnode(sg, aghead(ep), 1);
 		    agsubnode(sg, agtail(ep), 1);
 		} while (ep != e);
 	    }
 	} else if (parent != v) {
-	    Low(u) = min(Low(u), N(v));
+	    Low(u) = imin(Low(u), N(v));
 	    if (N(v) < N(u))
-		push(&stp->stk, e);
-	}
-    }
-}
-
-static void nodeInduce(Agraph_t * g, Agraph_t * eg)
-{
-    Agnode_t *n;
-    Agedge_t *e;
-
-    for (n = agfstnode(g); n; n = agnxtnode(g, n)) {
-	for (e = agfstout(eg, n); e; e = agnxtout(eg, e)) {
-	    if (agsubnode(g, aghead(e), 0)) {
-		agsubedge(g, e, 1);
-	    }
+		LIST_PUSH_BACK(&stp->stk, e);
 	}
     }
 }
@@ -245,26 +203,21 @@ static void addCutPts(Agraph_t * tree, Agraph_t * blk)
 static int process(Agraph_t * g, int gcnt)
 {
     Agnode_t *n;
-    bcstate state;
+    bcstate state = {0};
     Agraph_t *blk;
     Agraph_t *tree;
     int bcnt;
 
-    aginit(g, AGNODE, "info", sizeof(Agnodeinfo_t), TRUE);
-    aginit(g, AGEDGE, "info", sizeof(Agedgeinfo_t), TRUE);
-    aginit(g, AGRAPH, "info", sizeof(Agraphinfo_t), TRUE);
-
-    state.count = 0;
-    state.nComp = 0;
-    state.stk = 0;
-    state.blks = 0;
+    aginit(g, AGNODE, "info", sizeof(Agnodeinfo_t), true);
+    aginit(g, AGEDGE, "info", sizeof(Agedgeinfo_t), true);
+    aginit(g, AGRAPH, "info", sizeof(Agraphinfo_t), true);
 
     for (n = agfstnode(g); n; n = agnxtnode(g, n)) {
 	if (N(n) == 0)
 	    dfs(g, n, &state, 0);
     }
     for (blk = state.blks; blk; blk = NEXTBLK(blk)) {
-	nodeInduce(blk, g);
+	(void)graphviz_node_induce(blk, g);
     }
     if (external) {
 	bcnt = 0;
@@ -291,6 +244,7 @@ static int process(Agraph_t * g, int gcnt)
 	fprintf(stderr, "%s: %d blocks %d cutpoints\n", agnameof(g), bcnt,
 		cuts);
     }
+    LIST_FREE(&state.stk);
     if (state.blks && NEXTBLK(state.blks))
 	return 1;		/* >= 2 blocks */
     else
@@ -310,21 +264,18 @@ If no files are specified, stdin is used\n";
 static void usage(int v)
 {
     printf("%s",useString);
-    exit(v);
+    graphviz_exit(v);
 }
 
 static void split(char *name)
 {
     char *sfx = 0;
-    int size;
 
     sfx = strrchr(name, '.');
     if (sfx) {
-	size = sfx - name;
+	size_t size = (size_t)(sfx - name);
 	suffix = sfx + 1;
-	path = (char *) malloc(size + 1);
-	strncpy(path, name, size);
-	*(path + size) = '\0';
+	path = gv_strndup(name, size);
     } else {
 	path = name;
     }
@@ -335,7 +286,7 @@ static void init(int argc, char *argv[])
     int c;
 
     opterr = 0;
-    while ((c = getopt(argc, argv, ":o:xstv")) != -1) {
+    while ((c = getopt(argc, argv, ":o:xstv?")) != -1) {
 	switch (c) {
 	case 'o':
 	    outfile = optarg;
@@ -358,12 +309,16 @@ static void init(int argc, char *argv[])
 	    fprintf(stderr, "bcomps: option -%c missing argument - ignored\n", optopt);
 	    break;
 	case '?':
-	    if (optopt == '?')
+	    if (optopt == '\0' || optopt == '?')
 		usage(0);
-	    else
+	    else {
 		fprintf(stderr,
-			"bcomps: option -%c unrecognized - ignored\n", optopt);
+			"bcomps: option -%c unrecognized\n", optopt);
+		usage(1);
+	    }
 	    break;
+	default:
+	    UNREACHABLE();
 	}
     }
     argv += optind;
@@ -371,11 +326,6 @@ static void init(int argc, char *argv[])
 
     if (argc > 0)
 	Files = argv;
-}
-
-static Agraph_t *gread(FILE * fp)
-{
-  return agread(fp, (Agdisc_t *) 0);
 }
 
 int main(int argc, char *argv[])
@@ -386,7 +336,7 @@ int main(int argc, char *argv[])
     int gcnt = 0;
 
     init(argc, argv);
-    newIngraph(&ig, Files, gread);
+    newIngraph(&ig, Files);
 
     while ((g = nextGraph(&ig)) != 0) {
 	r |= process(g, gcnt);
@@ -394,5 +344,5 @@ int main(int argc, char *argv[])
 	gcnt++;
     }
 
-    return r;
+    graphviz_exit(r);
 }

@@ -1,24 +1,19 @@
-/* $Id$Revision: */
-/* vim:set shiftwidth=4 ts=8: */
-
 /*************************************************************************
  * Copyright (c) 2011 AT&T Intellectual Property
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
- * http://www.eclipse.org/legal/epl-v10.html
+ * https://www.eclipse.org/legal/epl-v10.html
  *
- * Contributors: See CVS logs. Details at http://www.graphviz.org/
+ * Contributors: Details at https://graphviz.org
  *************************************************************************/
 
+#include "config.h"
 
 #include "imageviewer.h"
 #include "mdichild.h"
+#include <QtGlobal>
 
-extern int errorPipe(char *errMsg);
-
-
-//! [0]
 ImageViewer::ImageViewer()
 {
     imageLabel = new QLabel;
@@ -37,15 +32,10 @@ ImageViewer::ImageViewer()
     setWindowTitle(tr(""));
     resize(800, 600);
 
-    setWindowIcon(QIcon(":/images/icon.png"));
-
+    setWindowIcon(QIcon(QStringLiteral(":/images/icon.png")));
 }
 
-//! [0]
-
-//! [1]
-bool ImageViewer::open(QString fileName)
-//! [1] //! [2]
+bool ImageViewer::open(const QString &fileName)
 {
     if (!fileName.isEmpty()) {
 	QImage image(fileName);
@@ -65,20 +55,25 @@ bool ImageViewer::open(QString fileName)
 
 void ImageViewer::print()
 {
-    Q_ASSERT(imageLabel->pixmap());
 #ifndef QT_NO_PRINTER
-//! [6] //! [7]
+    auto get_pixmap = [&]() {
+#if QT_VERSION < QT_VERSION_CHECK(5, 15, 0)
+        Q_ASSERT(imageLabel->pixmap());
+        return *imageLabel->pixmap();
+#else
+        return imageLabel->pixmap(Qt::ReturnByValue);
+#endif
+    };
     QPrintDialog dialog(&printer, this);
-//! [7] //! [8]
     if (dialog.exec()) {
 	QPainter painter(&printer);
 	QRect rect = painter.viewport();
-	QSize size = imageLabel->pixmap()->size();
+	QSize size = get_pixmap().size();
 	size.scale(rect.size(), Qt::KeepAspectRatio);
 	painter.setViewport(rect.x(), rect.y(), size.width(),
 			    size.height());
-	painter.setWindow(imageLabel->pixmap()->rect());
-	painter.drawPixmap(0, 0, *imageLabel->pixmap());
+	painter.setWindow(get_pixmap().rect());
+	painter.drawPixmap(0, 0, get_pixmap());
     }
 #endif
 }
@@ -132,48 +127,43 @@ void ImageViewer::createActions()
     printAct = new QAction(tr("&Print..."), this);
     printAct->setShortcut(tr("Ctrl+P"));
     printAct->setEnabled(false);
-    connect(printAct, SIGNAL(triggered()), this, SLOT(print()));
+    connect(printAct, &QAction::triggered, this, &ImageViewer::print);
 
     exitAct = new QAction(tr("E&xit"), this);
     exitAct->setShortcut(tr("Ctrl+Q"));
-    connect(exitAct, SIGNAL(triggered()), this, SLOT(close()));
+    connect(exitAct, &QAction::triggered, this, &ImageViewer::close);
 
     zoomInAct = new QAction(tr("Zoom &In (25%)"), this);
     zoomInAct->setShortcut(tr("Ctrl++"));
     zoomInAct->setEnabled(false);
-    connect(zoomInAct, SIGNAL(triggered()), this, SLOT(zoomIn()));
+    connect(zoomInAct, &QAction::triggered, this, &ImageViewer::zoomIn);
 
     zoomOutAct = new QAction(tr("Zoom &Out (25%)"), this);
     zoomOutAct->setShortcut(tr("Ctrl+-"));
     zoomOutAct->setEnabled(false);
-    connect(zoomOutAct, SIGNAL(triggered()), this, SLOT(zoomOut()));
+    connect(zoomOutAct, &QAction::triggered, this, &ImageViewer::zoomOut);
 
     normalSizeAct = new QAction(tr("&Normal Size"), this);
     normalSizeAct->setShortcut(tr("Ctrl+S"));
     normalSizeAct->setEnabled(false);
-    connect(normalSizeAct, SIGNAL(triggered()), this, SLOT(normalSize()));
+    connect(normalSizeAct, &QAction::triggered, this, &ImageViewer::normalSize);
 
     fitToWindowAct = new QAction(tr("&Fit to Window"), this);
     fitToWindowAct->setEnabled(false);
     fitToWindowAct->setCheckable(true);
     fitToWindowAct->setShortcut(tr("Ctrl+F"));
-    connect(fitToWindowAct, SIGNAL(triggered()), this,
-	    SLOT(fitToWindow()));
+    connect(fitToWindowAct, &QAction::triggered, this,
+            &ImageViewer::fitToWindow);
 
     aboutAct = new QAction(tr("&About"), this);
-    connect(aboutAct, SIGNAL(triggered()), this, SLOT(about()));
+    connect(aboutAct, &QAction::triggered, this, &ImageViewer::about);
 
     aboutQtAct = new QAction(tr("About &Qt"), this);
-    connect(aboutQtAct, SIGNAL(triggered()), qApp, SLOT(aboutQt()));
+    connect(aboutQtAct, &QAction::triggered, qApp, &QApplication::aboutQt);
 }
 
 void ImageViewer::createMenus()
 {
-
-/*    fileMenu = new QMenu(tr("&File"), this);
-    fileMenu->addAction(printAct);
-    fileMenu->addSeparator();
-    fileMenu->addAction(exitAct);*/
 
     viewMenu = new QMenu(tr("&View"), this);
     viewMenu->addAction(zoomInAct);
@@ -182,14 +172,7 @@ void ImageViewer::createMenus()
     viewMenu->addSeparator();
     viewMenu->addAction(fitToWindowAct);
 
-/*    helpMenu = new QMenu(tr("&Help"), this);
-    helpMenu->addAction(aboutAct);
-    helpMenu->addAction(aboutQtAct);*/
-
-//    menuBar()->addMenu(fileMenu);
     menuBar()->addMenu(viewMenu);
-    //menuBar()->addMenu(helpMenu);
-
 }
 
 void ImageViewer::updateActions()
@@ -201,9 +184,16 @@ void ImageViewer::updateActions()
 
 void ImageViewer::scaleImage(double factor)
 {
-    Q_ASSERT(imageLabel->pixmap());
+    auto get_pixmap = [&]() {
+#if QT_VERSION < QT_VERSION_CHECK(5, 15, 0)
+        Q_ASSERT(imageLabel->pixmap());
+        return *imageLabel->pixmap();
+#else
+        return imageLabel->pixmap(Qt::ReturnByValue);
+#endif
+    };
     scaleFactor *= factor;
-    imageLabel->resize(scaleFactor * imageLabel->pixmap()->size());
+    imageLabel->resize(scaleFactor * get_pixmap().size());
 
     adjustScrollBar(scrollArea->horizontalScrollBar(), factor);
     adjustScrollBar(scrollArea->verticalScrollBar(), factor);
@@ -221,7 +211,7 @@ void ImageViewer::adjustScrollBar(QScrollBar * scrollBar, double factor)
 
 void ImageViewer::closeEvent(QCloseEvent * event)
 {
-    this->graphWindow->previewFrm = NULL;
+    this->graphWindow->previewFrm = nullptr;
     event->accept();
 
 }

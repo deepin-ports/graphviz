@@ -1,22 +1,22 @@
-/* $Id$ $Revision$ */
-/* vim:set shiftwidth=4 ts=8: */
-
 /*************************************************************************
  * Copyright (c) 2011 AT&T Intellectual Property 
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
- * http://www.eclipse.org/legal/epl-v10.html
+ * https://www.eclipse.org/legal/epl-v10.html
  *
- * Contributors: See CVS logs. Details at http://www.graphviz.org/
+ * Contributors: Details at https://graphviz.org
  *************************************************************************/
+
+#include "config.h"
 
 #include "glutrender.h"
 #include "viewport.h"
 #include "arcball.h"
-#include "appmouse.h"
+#include "gui/appmouse.h"
 #include "glexpose.h"
-#include "glcompui.h"
+#include "gui/glcompui.h"
+#include <util/exit.h>
 
     /*call backs */
 
@@ -42,22 +42,18 @@ static glMouseButtonType getGlCompMouseType(int n)
 }
 
 
-void cb_reshape(int width, int height)
+static void cb_reshape(int width, int height)
 {
-    /* static int doonce=0; */
-    int vPort[4];
     float aspect;
     view->w = width;
     view->h = height;
     if (view->widgets)
 	glcompsetUpdateBorder(view->widgets, view->w, view->h);
     glViewport(0, 0, view->w, view->h);
-    /* get current viewport */
-    glGetIntegerv(GL_VIEWPORT, vPort);
     /* setup various opengl things that we need */
     glMatrixMode(GL_PROJECTION);
     glLoadIdentity();
-    init_arcBall(view->arcball, (GLfloat) view->w, (GLfloat) view->h);
+    *view->arcball = init_arcBall(view->w, view->h);
     if (view->w > view->h) {
 	aspect = (float) view->w / (float) view->h;
 	glOrtho(-aspect * GL_VIEWPORT_FACTOR, aspect * GL_VIEWPORT_FACTOR,
@@ -74,33 +70,32 @@ void cb_reshape(int width, int height)
 	/*** OpenGL END ***/
 
 }
-void cb_display(void )
+
+static void cb_display(void)
 {
-//    glClearColor(view->bgColor.R, view->bgColor.G, view->bgColor.B, view->bgColor.A);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glLoadIdentity();
     glexpose_main(view);	//draw all stuff
-//    draw_cube_tex();
     glutSwapBuffers();
     if (view->initFile) {
 	view->initFile = 0;
 	if (view->activeGraph == 0)
-	    close_graph(view, 0);
+	    close_graph(view);
 	add_graph_to_viewport_from_file(view->initFileName);
     }
 
 }
-void cb_mouseclick(int button, int state,int x, int y)
-{
-    Agraph_t* g;
 
+static void cb_mouseclick(int button, int state, int x, int y)
+{
     if (view->g == 0) return;
-    g=view->g[view->activeGraph];
     begin_x = (float) x;
     begin_y = (float) y;
     if(state==GLUT_DOWN)
     {
-	view->widgets->common.functions.mousedown((glCompObj*)view->widgets,(GLfloat) x,(GLfloat)y,getGlCompMouseType(button));
+	view->widgets->base.common.functions.mousedown(&view->widgets->base,
+	                                               (float)x, (float)y,
+	                                               getGlCompMouseType(button));
 	if (button ==  GLUT_LEFT_BUTTON)
 	    appmouse_left_click_down(view,x,y);
         if (button ==  GLUT_RIGHT_BUTTON)
@@ -110,41 +105,30 @@ void cb_mouseclick(int button, int state,int x, int y)
     }
     else
     {
-	view->FontSizeConst = GetOGLDistance(14);
 	view->arcball->isDragging = 0;
-	view->widgets->common.functions.mouseup((glCompObj*)view->widgets,(GLfloat) x,(GLfloat) y,getGlCompMouseType(button));
+	view->widgets->base.common.functions.mouseup(&view->widgets->base,
+	                                             (float)x, (float)y,
+	                                             getGlCompMouseType(button));
 
-	if (button ==  GLUT_LEFT_BUTTON)
-	    appmouse_left_click_up(view,x,y);
-	if (button ==  GLUT_LEFT_BUTTON)
-	    appmouse_right_click_up(view,x,y);
-	if (button ==  GLUT_MIDDLE_BUTTON)
-	    appmouse_middle_click_up(view,x,y);
+	if (button == GLUT_LEFT_BUTTON || button == GLUT_RIGHT_BUTTON ||
+	    button == GLUT_MIDDLE_BUTTON)
+	    appmouse_up(view, x, y);
 	dx = 0.0;
 	dy = 0.0;
     }
     cb_display();
 
 }
-void cb_mouseover(int x,int y)/*no mouse click only mouse pointer moving on context*/
-{
 
-
-
-
-
-
-
-
-}
-void cb_drag(int X,int Y)/*mouse moving witha button clicked (dragging)*/
+// mouse moving with a button clicked (dragging)
+static void cb_drag(int X, int Y)
 {
 
     float x = (float) X;
     float y = (float) Y;
 
     if (view->widgets)
-	view->widgets->common.functions.mouseover((glCompObj*)view->widgets, (GLfloat) x,(GLfloat) y);
+	view->widgets->base.common.functions.mouseover(&view->widgets->base, x, y);
 
     dx = x - begin_x;
     dy = y - begin_y;
@@ -152,33 +136,21 @@ void cb_drag(int X,int Y)/*mouse moving witha button clicked (dragging)*/
     view->mouse.dragY = dy;
     appmouse_move(view,x,y);
 
-    if((view->mouse.t==glMouseLeftButton) && (view->mouse.down)  )
-	appmouse_left_drag(view,x,y);
-    if((view->mouse.t==glMouseRightButton) && (view->mouse.down))
-	appmouse_right_drag(view,x,y);
-    if((view->mouse.t==glMouseMiddleButton) && (view->mouse.down))
-	appmouse_middle_drag(view,x,y);
+    if (view->mouse.down)
+	appmouse_drag(view, x, y);
     begin_x = x;
     begin_y = y;
     cb_display();
 
 }
-void cb_mouseentry(int state)
-{
-    if(state==GLUT_LEFT)
-    {
-	//TODO when mouse leaves the scene (which might be impossible in full screen modes with one monitor	
-    }
-    else // GLUT_ENTERED
-    {
-	//TODO mouse is back in scene 
-    }
 
-}
-void cb_keyboard(unsigned char key,int x, int y)
+static void cb_keyboard(unsigned char key, int x, int y)
 {
+    (void)x;
+    (void)y;
+
     if (key==27)    /*ESC*/
-	exit (1);
+	graphviz_exit(1);
     if(key=='3')
 	switch2D3D(NULL, 0, 0,glMouseLeftButton);
     if(key=='c')
@@ -194,14 +166,21 @@ void cb_keyboard(unsigned char key,int x, int y)
 
     appmouse_key_press(view,key);
 }
-void cb_keyboard_up(unsigned char key,int x, int y)
+
+static void cb_keyboard_up(unsigned char key, int x, int y)
 {
-    appmouse_key_release(view,key);;
+    (void)key;
+    (void)x;
+    (void)y;
+
+    appmouse_key_release(view);
 }
 
-
-void cb_special_key(int key, int x, int y)
+static void cb_special_key(int key, int x, int y)
 {
+    (void)x;
+    (void)y;
+
     if(key==GLUT_KEY_F1)
     {
 	printf("Currently help is not available\n");
@@ -209,51 +188,39 @@ void cb_special_key(int key, int x, int y)
     appmouse_key_press(view,key);
 
 }
-void cb_special_key_up(int key, int x, int y)
+
+static void cb_special_key_up(int key, int x, int y)
 {
+    (void)x;
+    (void)y;
+
     if(key==GLUT_KEY_F1)
     {
 	printf("Currently help is not available\n");
     }
-    appmouse_key_release(view,key);
+    appmouse_key_release(view);
 
 }
 
-static int cb_game_mode(char* optArg)
+static void cb_game_mode(char* optArg)
 {
     
     glutGameModeString(optArg);
     if (glutGameModeGet(GLUT_GAME_MODE_POSSIBLE)) 
     {
     	glutEnterGameMode();
-	return 1;
-
     }
     else 
     {
 	printf("smyrna cannot initialize requested screen resolution and rate!\n");
-	exit(-1);
+	graphviz_exit(-1);
 
     }
-
-}
-static int cb_windowed_mode(int w,int h)
-{
-  glutInitWindowSize(w, h);
-  glutInitDisplayMode(GLUT_RGBA | GLUT_DEPTH | GLUT_ACCUM | GLUT_DOUBLE);
-  glutCreateWindow("smyrna");
-  return 1;
-    
 }
 
-int cb_glutinit(int x,int y,int w,int h, int bits,int s_rate,int fullscreen,int* argcp, char *argv[],char* optArg)
-{
+int cb_glutinit(int w, int h, int *argcp, char *argv[], char *optArg) {
     /*
-    x,y:window position , unless in full screen mode
     w,h: width and height of the window in pixels
-    bits: display color bit count
-    s_rate: for full screen mode this value represents refresh rate in hertz
-    fullscreen: if it will be a fullscreen window,
     argcp argv: main function's parameters, required for glutinit
     */
 
@@ -261,12 +228,8 @@ int cb_glutinit(int x,int y,int w,int h, int bits,int s_rate,int fullscreen,int*
 
     glutInit(argcp,argv); //this is required by some OS.
 
-//    glutInitDisplayMode( GLUT_ALPHA | GLUT_DOUBLE | GLUT_RGBA);
 	glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGBA | GLUT_DEPTH);
 	// The Type Of Depth Testing To Do
-/*	glEnable(GL_BLEND);
-	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-	glShadeModel(GL_SMOOTH);*/
         glDisable(GL_DEPTH);
 	glClearDepth(1.0f);		// Depth Buffer Setup
 	glEnable(GL_DEPTH_TEST);							// Enables Depth Testing
@@ -274,13 +237,7 @@ int cb_glutinit(int x,int y,int w,int h, int bits,int s_rate,int fullscreen,int*
 	glHint(GL_PERSPECTIVE_CORRECTION_HINT, GL_NICEST);	// Really Nice Perspective Calculations
 
 
-    if (fullscreen)
-	cb_game_mode(optArg);
-    else    //well, use gtk then
-    {	
-	cb_windowed_mode(w,h);
-
-    }
+    cb_game_mode(optArg);
 
     /*register callbacks here*/
     glutDisplayFunc(cb_display);
@@ -289,9 +246,9 @@ int cb_glutinit(int x,int y,int w,int h, int bits,int s_rate,int fullscreen,int*
     glutKeyboardUpFunc( cb_keyboard_up);
     glutMouseFunc(cb_mouseclick);
     glutMotionFunc(cb_drag);
-    glutPassiveMotionFunc(cb_mouseover);
+    glutPassiveMotionFunc(NULL);
     glutVisibilityFunc(NULL);
-    glutEntryFunc(cb_mouseentry);//if mouse pointer left or entered the scene
+    glutEntryFunc(NULL);
     glutSpecialFunc(cb_special_key);
     glutSpecialUpFunc(cb_special_key_up);
 
@@ -318,5 +275,3 @@ int cb_glutinit(int x,int y,int w,int h, int bits,int s_rate,int fullscreen,int*
     return 0; //we should never reach here
 
 }
-
-

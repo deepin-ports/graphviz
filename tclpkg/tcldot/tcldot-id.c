@@ -1,31 +1,34 @@
-/* $Id$ $Revision$ */
-/* vim:set shiftwidth=4 ts=8: */
-
 /*************************************************************************
  * Copyright (c) 2011 AT&T Intellectual Property 
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
- * http://www.eclipse.org/legal/epl-v10.html
+ * https://www.eclipse.org/legal/epl-v10.html
  *
- * Contributors: See CVS logs. Details at http://www.graphviz.org/
+ * Contributors: Details at https://graphviz.org
  *************************************************************************/
 
+#include "config.h"
 
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <util/alloc.h>
+#include <util/unreachable.h>
 #include "tcldot.h"
 
 // Agiddisc functions
 static void *myiddisc_open(Agraph_t *g, Agdisc_t *disc) {
-    ictx_t *ictx = (ictx_t *)disc;
-    gctx_t *gctx;
-
-    gctx = (gctx_t *)malloc(sizeof(gctx_t));
+    ictx_t *const ictx = (ictx_t *)((char *)disc - offsetof(ictx_t, mydisc));
+    gctx_t *const gctx = gv_alloc(sizeof(gctx_t));
     gctx->g = g;
     gctx->ictx = ictx;
-    return (void *)gctx;
+    return gctx;
 }
 static long myiddisc_map(void *state, int objtype, char *str, uint64_t *id, int createflag) {
-    gctx_t *gctx = (gctx_t *)state;
+    (void)objtype;
+
+    gctx_t *gctx = state;
     ictx_t *ictx = gctx->ictx;
     char *s;
 
@@ -34,23 +37,19 @@ static long myiddisc_map(void *state, int objtype, char *str, uint64_t *id, int 
             s = agstrdup(gctx->g, str);
         else
             s = agstrbind(gctx->g, str);
-        *id = (uint64_t) s;
+        *id = (uint64_t)(uintptr_t)s;
     } else {
         *id = ictx->ctr;  /* counter maintained in per-interp space, so that
 		ids are unique across all graphs in the interp */
         ictx->ctr += 2;
     }
-    return TRUE;
+    return 1;
 }
-/* we don't allow users to explicitly set IDs, either */
-static long myiddisc_alloc(void *state, int objtype, uint64_t request_id) {
-    NOTUSED(state);
-    NOTUSED(objtype);
-    NOTUSED(request_id);
-    return FALSE;
-}
+
 static void myiddisc_free(void *state, int objtype, uint64_t id) {
-    gctx_t *gctx = (gctx_t *)state;
+    (void)objtype;
+
+    gctx_t *gctx = state;
 
 /* FIXME no obj* available
     ictx_t *ictx = gctx->ictx;
@@ -65,21 +64,19 @@ static void myiddisc_free(void *state, int objtype, uint64_t id) {
     Tcl_DeleteCommand(ictx->interp, buf);
 */
     if (id % 2 == 0)
-        agstrfree(gctx->g, (char *) id);
+        agstrfree(gctx->g, (char *)(uintptr_t)id, false);
 }
 static char *myiddisc_print(void *state, int objtype, uint64_t id) {
-    NOTUSED(state);
-    NOTUSED(objtype);
+    (void)state;
+    (void)objtype;
     if (id % 2 == 0)
-        return (char *) id;
+        return (char *)(uintptr_t)id;
     else
         return "";
 }
-static void myiddisc_close(void *state) {
-    free(state);
-}
+
 static void myiddisc_idregister(void *state, int objtype, void *obj) {
-    gctx_t *gctx = (gctx_t *)state;
+    gctx_t *gctx = state;
     ictx_t *ictx = gctx->ictx;
     Tcl_Interp *interp = ictx->interp;
     Tcl_CmdProc *proc = NULL;
@@ -89,19 +86,15 @@ static void myiddisc_idregister(void *state, int objtype, void *obj) {
         case AGNODE: proc=nodecmd; break;
         case AGINEDGE:
         case AGOUTEDGE: proc=edgecmd; break;
+        default: UNREACHABLE();
     }
-#ifndef TCLOBJ
-    Tcl_CreateCommand(interp, obj2cmd(obj), proc, (ClientData) gctx, (Tcl_CmdDeleteProc *) NULL);
-#else
-    Tcl_CreateObjCommand(interp, obj2cmd(obj), proc, (ClientData) gctx, (Tcl_CmdDeleteProc *) NULL);
-#endif           
+    Tcl_CreateCommand(interp, obj2cmd(obj), proc, (ClientData) gctx, NULL);
 }
 Agiddisc_t myiddisc = {
     myiddisc_open,
     myiddisc_map,
-    myiddisc_alloc,
     myiddisc_free,
     myiddisc_print,
-    myiddisc_close,
+    free,
     myiddisc_idregister
 };

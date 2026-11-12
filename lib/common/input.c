@@ -1,25 +1,38 @@
-/* $Id$ $Revision$ */
-/* vim:set shiftwidth=4 ts=8: */
-
+/// @file
+/// @ingroup common_render
 /*************************************************************************
  * Copyright (c) 2011 AT&T Intellectual Property 
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
- * http://www.eclipse.org/legal/epl-v10.html
+ * https://www.eclipse.org/legal/epl-v10.html
  *
- * Contributors: See CVS logs. Details at http://www.graphviz.org/
+ * Contributors: Details at https://graphviz.org
  *************************************************************************/
 
-#include <ctype.h>
-#include "render.h"
-#include "htmltable.h"
-#include "gvc.h"
-#include "xdot.h"
-#include "agxbuf.h"
+#include "config.h"
+
+#include <common/render.h>
+#include <common/htmltable.h>
+#include <errno.h>
+#include <gvc/gvc.h>
+#include <xdot/xdot.h>
+#include <limits.h>
+#include <stdbool.h>
+#include <stdlib.h>
+#include <string.h>
+#include <util/agxbuf.h>
+#include <util/alloc.h>
+#include <util/exit.h>
+#include <util/gv_ctype.h>
+#include <util/gv_fopen.h>
+#include <util/gv_math.h>
+#include <util/startswith.h>
+#include <util/strcasecmp.h>
+#include <util/streq.h>
 
 static char *usageFmt =
-    "Usage: %s [-Vv?] [-(GNE)name=val] [-(KTlso)<val>] <dot files>\n";
+    "Usage: %s [-Vv?] [-(GNEA)name=val] [-(KTlso)<val>] <dot files>\n";
 
 static char *genericItems = "\n\
  -V          - Print version and exit\n\
@@ -27,6 +40,7 @@ static char *genericItems = "\n\
  -Gname=val  - Set graph attribute 'name' to 'val'\n\
  -Nname=val  - Set node attribute 'name' to 'val'\n\
  -Ename=val  - Set edge attribute 'name' to 'val'\n\
+ -Aname=val  - Set attribute 'name' to 'val' for graph, node, and edge\n\
  -Tv         - Set output format to 'v'\n\
  -Kv         - Set layout engine to 'v' (overrides default based on command name)\n\
  -lv         - Use external library 'v'\n\
@@ -53,23 +67,18 @@ static char *fdpItems = "\n\
  -LC<v>      - Set overlap expansion factor to v\n\
  -LT[*]<v>   - Set temperature (temperature factor) to v\n";
 
-static char *memtestFlags = "(additional options for memtest)  [-m<v>]\n";
-static char *memtestItems = "\n\
- -m          - Memory test (Observe no growth with top. Kill when done.)\n\
- -m[v]       - Memory test - v iterations.\n";
-
 static char *configFlags = "(additional options for config)  [-cv]\n";
 static char *configItems = "\n\
  -c          - Configure plugins (Writes $prefix/lib/graphviz/config \n\
                with available plugin information.  Needs write privilege.)\n\
  -?          - Print usage and exit\n";
 
-/* dotneato_usage:
- * Print usage information. If GvExitOnUsage is set, exit with
+/* Print usage information. If GvExitOnUsage is set, exit with
  * given exval, else return exval+1.
+ *
+ * @param argv0 Command name to use in usage message
  */
-int dotneato_usage(int exval)
-{
+int dotneato_usage(const char *argv0, int exval) {
     FILE *outs;
 
     if (exval > 0)
@@ -77,25 +86,21 @@ int dotneato_usage(int exval)
     else
 	outs = stdout;
 
-    fprintf(outs, usageFmt, CmdName);
+    fprintf(outs, usageFmt, argv0);
     fputs(neatoFlags, outs);
     fputs(fdpFlags, outs);
-    fputs(memtestFlags, outs);
     fputs(configFlags, outs);
     fputs(genericItems, outs);
     fputs(neatoItems, outs);
     fputs(fdpItems, outs);
-    fputs(memtestItems, outs);
     fputs(configItems, outs);
 
-    if (GvExitOnUsage && (exval >= 0))
-	exit(exval);
-    return (exval+1);
-	
+    if (GvExitOnUsage && exval >= 0)
+	graphviz_exit(exval);
+    return exval + 1;
 }
 
-/* getFlagOpt:
- * Look for flag parameter. idx is index of current argument.
+/* Look for flag parameter. idx is index of current argument.
  * We assume argv[*idx] has the form "-x..." If there are characters 
  * after the x, return
  * these, else if there are more arguments, return the next one,
@@ -111,7 +116,7 @@ static char *getFlagOpt(int argc, char **argv, int *idx)
     if (i < argc - 1) {
 	i++;
 	arg = argv[i];
-	if (*arg && (*arg != '-')) {
+	if (*arg && *arg != '-') {
 	    *idx = i;
 	    return arg;
 	}
@@ -119,17 +124,15 @@ static char *getFlagOpt(int argc, char **argv, int *idx)
     return 0;
 }
 
-/* dotneato_basename:
- * Partial implementation of real basename.
+/* Partial implementation of real basename.
  * Skip over any trailing slashes or backslashes; then
  * find next (back)slash moving left; return string to the right.
  * If no next slash is found, return the whole string.
  */
-static char* dotneato_basename (char* path)
-{
+static char *dotneato_basename(char *pathname) {
     char* ret;
-    char* s = path;
-    if (*s == '\0') return path; /* empty string */
+    char* s = pathname;
+    if (*s == '\0') return pathname; /* empty string */
 #ifdef _WIN32
     /* On Windows, executables, by convention, end in ".exe". Thus,
      * this may be part of the path name and must be removed for
@@ -143,59 +146,54 @@ static char* dotneato_basename (char* path)
     while (*s) s++;
     s--;
     /* skip over trailing slashes, nulling out as we go */
-    while ((s > path) && ((*s == '/') || (*s == '\\')))
+    while (s > pathname && (*s == '/' || *s == '\\'))
 	*s-- = '\0';
-    if (s == path) ret = path;
+    if (s == pathname) ret = pathname;
     else {
-	while ((s > path) && ((*s != '/') && (*s != '\\'))) s--;
-	if ((*s == '/') || (*s == '\\')) ret = s+1;
-	else ret = path;
+	while (s > pathname && *s != '/' && *s != '\\') s--;
+	if (*s == '/' || *s == '\\') ret = s+1;
+	else ret = pathname;
     }
 #ifdef _WIN32
     /* On Windows, names are case-insensitive, so make name lower-case
      */
-    {
-	char c;
-	for (s = ret; (c = *s); s++)
-	    *s = tolower(c);
-    }
+    gv_tolower_str(ret);
 #endif
     return ret;
 }
 
 static void use_library(GVC_t *gvc, const char *name)
 {
-    static int cnt = 0;
+    static size_t cnt = 0;
     if (name) {
-	Lib = ALLOC(cnt + 2, Lib, const char *);
+	const size_t old_nmemb = cnt == 0 ? cnt : cnt + 1;
+	Lib = gv_recalloc(Lib, old_nmemb, cnt + 2, sizeof(const char *));
 	Lib[cnt++] = name;
 	Lib[cnt] = NULL;
     }
     gvc->common.lib = Lib;
 }
 
-static void global_def(agxbuf* xb, char *dcl, int kind,
-         attrsym_t * ((*dclfun) (Agraph_t *, int kind, char *, char *)) )
-{
+static void global_def(char *dcl, int kind) {
     char *p;
     char *rhs = "true";
+    agxbuf xb = {0};
 
     attrsym_t *sym;
     if ((p = strchr(dcl, '='))) {
-	agxbput_n (xb, dcl, p-dcl);
+        agxbput_n(&xb, dcl, (size_t)(p - dcl));
         rhs = p+1;
     }
     else
-	agxbput (xb, dcl);
-    sym = dclfun(NULL, kind, agxbuse (xb), rhs);
+	agxbput(&xb, dcl);
+    sym = agattr_text(NULL, kind, agxbuse(&xb), rhs);
     sym->fixed = 1;
+    agxbfree(&xb);
 }
 
 static int gvg_init(GVC_t *gvc, graph_t *g, char *fn, int gidx)
 {
-    GVG_t *gvg;
-
-    gvg = zmalloc(sizeof(GVG_t));
+    GVG_t *gvg = gv_alloc(sizeof(GVG_t));
     if (!gvc->gvgs) 
 	gvc->gvgs = gvg;
     else
@@ -216,25 +214,25 @@ graph_t *gvPluginsGraph(GVC_t *gvc)
     return P_graph;
 }
 
-/* dotneato_args_initialize"
- * Scan argv[] for allowed flags.
+/* Scan argv[] for allowed flags.
  * Return 0 on success; v+1 if calling function should call exit(v).
  * If -c is set, config file is created and we exit. 
  */
 int dotneato_args_initialize(GVC_t * gvc, int argc, char **argv)
 {
-    char c, *rest, *layout;
-    const char *val;
-    int i, v, nfiles;
-    unsigned char buf[SMALLBUF];
-    agxbuf xb;
-    int Kflag = 0;
+    char c;
+    bool Kflag = false;
 
     /* establish if we are running in a CGI environment */
     HTTPServerEnVar = getenv("SERVER_NAME");
 
-    /* establish Gvfilepath, if any */
-    Gvfilepath = getenv("GV_FILE_PATH");
+    // test `$GV_FILE_PATH`, a legacy knob, is not set
+    if (getenv("GV_FILE_PATH") != NULL) {
+        fprintf(stderr, "$GV_FILE_PATH environment variable set; exiting\n"
+                        "\n"
+                        "This sandboxing mechanism is no longer supported\n");
+        graphviz_exit(EXIT_FAILURE);
+    }
 
     gvc->common.cmdname = dotneato_basename(argv[0]);
     if (gvc->common.verbose) {
@@ -248,113 +246,143 @@ int dotneato_args_initialize(GVC_t * gvc, int argc, char **argv)
     /* must happen before trying to select any plugins */
     if (gvc->common.config) {
         gvconfig(gvc, gvc->common.config);
-	exit (0);
+	graphviz_exit(0);
     }
 
     /* feed the globals */
-    Verbose = gvc->common.verbose;
-    CmdName = gvc->common.cmdname;
+    Verbose = gvc->common.verbose > UCHAR_MAX
+      ? UCHAR_MAX
+      : (unsigned char)gvc->common.verbose;
 
-    nfiles = 0;
-    for (i = 1; i < argc; i++)
+    size_t nfiles = 0;
+    for (int i = 1; i < argc; i++)
 	if (argv[i] && argv[i][0] != '-')
 	    nfiles++;
-    gvc->input_filenames = N_NEW(nfiles + 1, char *);
+    gvc->input_filenames = gv_calloc(nfiles + 1, sizeof(char *));
     nfiles = 0;
-    agxbinit(&xb, SMALLBUF, buf);
-    for (i = 1; i < argc; i++) {
-	if (argv[i] && argv[i][0] == '-') {
-	    rest = &(argv[i][2]);
+    for (int i = 1; i < argc; i++) {
+	if (argv[i] &&
+	    (startswith(argv[i], "-V") || strcmp(argv[i], "--version") == 0)) {
+	    fprintf(stderr, "%s - %s version %s (%s)\n",
+	            gvc->common.cmdname, gvc->common.info[0],
+	            gvc->common.info[1], gvc->common.info[2]);
+	    if (GvExitOnUsage) graphviz_exit(0);
+	    return 1;
+	} else if (argv[i] &&
+	    (startswith(argv[i], "-?") || strcmp(argv[i], "--help") == 0)) {
+	    return dotneato_usage(argv[0], 0);
+	} else if (argv[i] && startswith(argv[i], "--filepath=")) {
+	    free(Gvfilepath);
+	    Gvfilepath = gv_strdup(argv[i] + strlen("--filepath="));
+	} else if (argv[i] && argv[i][0] == '-') {
+	    char *const rest = &argv[i][2];
 	    switch (c = argv[i][1]) {
 	    case 'G':
 		if (*rest)
-		    global_def(&xb, rest, AGRAPH, agattr);
+		    global_def(rest, AGRAPH);
 		else {
 		    fprintf(stderr, "Missing argument for -G flag\n");
-		    return (dotneato_usage(1));
+		    return dotneato_usage(argv[0], 1);
 		}
 		break;
 	    case 'N':
 		if (*rest)
-		    global_def(&xb, rest, AGNODE,agattr);
+		    global_def(rest, AGNODE);
 		else {
 		    fprintf(stderr, "Missing argument for -N flag\n");
-		    return (dotneato_usage(1));
+		    return dotneato_usage(argv[0], 1);
 		}
 		break;
 	    case 'E':
 		if (*rest)
-		    global_def(&xb, rest, AGEDGE,agattr);
+		    global_def(rest, AGEDGE);
 		else {
 		    fprintf(stderr, "Missing argument for -E flag\n");
-		    return (dotneato_usage(1));
+		    return dotneato_usage(argv[0], 1);
 		}
 		break;
-	    case 'T':
-		val = getFlagOpt(argc, argv, &i);
+	    case 'A':
+		if (*rest) {
+		    global_def(rest, AGRAPH);
+		    global_def(rest, AGNODE);
+		    global_def(rest, AGEDGE);
+		} else {
+		    fprintf(stderr, "Missing argument for -A flag\n");
+		    return dotneato_usage(argv[0], 1);
+		}
+		break;
+	    case 'T': {
+		const char *const val = getFlagOpt(argc, argv, &i);
 		if (!val) {
 		    fprintf(stderr, "Missing argument for -T flag\n");
-		    return (dotneato_usage(1));
+		    return dotneato_usage(argv[0], 1);
 		}
-		v = gvjobs_output_langname(gvc, val);
-		if (!v) {
-		    fprintf(stderr, "Format: \"%s\" not recognized. Use one of:%s\n",
-			val, gvplugin_list(gvc, API_device, val));
-		    if (GvExitOnUsage) exit(1);
-		    return(2);
+		if (!gvjobs_output_langname(gvc, val)) {
+		    const char *const fmts = gvplugin_list(gvc, API_device, val);
+		    fprintf(stderr, "Format: \"%s\" not recognized.", val);
+		    if (strlen(fmts) > 1) {
+			fprintf(stderr, " Use one of:%s\n", fmts);
+		    } else {
+			/* Q: Should 'dot -c' be suggested generally or only when val = "dot"? */
+			fprintf(stderr, " No formats found.\nPerhaps \"dot -c\" needs to be run (with installer's privileges) to register the plugins?\n");
+		    }
+		    if (GvExitOnUsage) graphviz_exit(1);
+		    return 2;
 		}
 		break;
-	    case 'K':
-		val = getFlagOpt(argc, argv, &i);
+	    }
+	    case 'K': {
+		const char *const val = getFlagOpt(argc, argv, &i);
 		if (!val) {
                     fprintf(stderr, "Missing argument for -K flag\n");
-                    return (dotneato_usage(1));
+                    return dotneato_usage(argv[0], 1);
                 }
-                v = gvlayout_select(gvc, val);
+                const int v = gvlayout_select(gvc, val);
                 if (v == NO_SUPPORT) {
 	            fprintf(stderr, "There is no layout engine support for \"%s\"\n", val);
                     if (streq(val, "dot")) {
                         fprintf(stderr, "Perhaps \"dot -c\" needs to be run (with installer's privileges) to register the plugins?\n");
                     }
 		    else {
-                        fprintf(stderr, "Use one of:%s\n",
-				gvplugin_list(gvc, API_layout, val));
+			const char *const lyts = gvplugin_list(gvc, API_layout, val);
+			if (strlen(lyts) > 1) {
+			    fprintf(stderr, " Use one of:%s\n", lyts);
+			} else {
+			    /* Q: Should 'dot -c' be suggested generally or only when val = "dot"? */
+			    fprintf(stderr, " No layouts found.\nPerhaps \"dot -c\" needs to be run (with installer's privileges) to register the plugins?\n");
+			}
 		    }
-		    if (GvExitOnUsage) exit(1);
-		    return(2);
+		    if (GvExitOnUsage) graphviz_exit(1);
+		    return 2;
                 }
-		Kflag = 1;
+		Kflag = true;
 		break;
+	    }
 	    case 'P':
 		P_graph = gvplugin_graph(gvc);
 		break;
-	    case 'V':
-		fprintf(stderr, "%s - %s version %s (%s)\n",
-			gvc->common.cmdname, gvc->common.info[0], 
-			gvc->common.info[1], gvc->common.info[2]);
-		if (GvExitOnUsage) exit(0);
-		return (1);
-		break;
-	    case 'l':
-		val = getFlagOpt(argc, argv, &i);
+	    case 'l': {
+		const char *const val = getFlagOpt(argc, argv, &i);
 		if (!val) {
 		    fprintf(stderr, "Missing argument for -l flag\n");
-		    return (dotneato_usage(1));
+		    return dotneato_usage(argv[0], 1);
 		}
 		use_library(gvc, val);
 		break;
-	    case 'o':
-		val = getFlagOpt(argc, argv, &i);
+	    }
+	    case 'o': {
+		const char *const val = getFlagOpt(argc, argv, &i);
 		if (!val) {
 		    fprintf(stderr, "Missing argument for -o flag\n");
-		    return (dotneato_usage(1));
+		    return dotneato_usage(argv[0], 1);
 		}
 		if (! gvc->common.auto_outfile_names)
 		    gvjobs_output_filename(gvc, val);
 		break;
+	    }
 	    case 'q':
 		if (*rest) {
-		    v = atoi(rest);
+		    const int v = atoi(rest);
 		    if (v <= 0) {
 			fprintf(stderr,
 				"Invalid parameter \"%s\" for -q flag - ignored\n",
@@ -373,35 +401,31 @@ int dotneato_args_initialize(GVC_t * gvc, int argc, char **argv)
 			fprintf(stderr,
 				"Invalid parameter \"%s\" for -s flag\n",
 				rest);
-			return (dotneato_usage(1));
+			return dotneato_usage(argv[0], 1);
 		    }
-		    else if (PSinputscale == 0)
+		    else if (is_exactly_zero(PSinputscale))
 			PSinputscale = POINTS_PER_INCH;
 		} else
 		    PSinputscale = POINTS_PER_INCH;
 		break;
 	    case 'x':
-		Reduce = TRUE;
+		Reduce = true;
 		break;
 	    case 'y':
-		Y_invert = TRUE;
-		break;
-	    case '?':
-		return (dotneato_usage(0));
+		Y_invert = true;
 		break;
 	    default:
-		agerr(AGERR, "%s: option -%c unrecognized\n\n", gvc->common.cmdname,
+		agerrorf("%s: option -%c unrecognized\n\n", gvc->common.cmdname,
 			c);
-		return (dotneato_usage(1));
+		return dotneato_usage(argv[0], 1);
 	    }
 	} else if (argv[i])
 	    gvc->input_filenames[nfiles++] = argv[i];
     }
-    agxbfree (&xb);
 
     /* if no -K, use cmd name to set layout type */
     if (!Kflag) {
-	layout = gvc->common.cmdname;
+	const char *layout = gvc->common.cmdname;
 	if (streq(layout, "dot_static")
 	    || streq(layout, "dot_builtins")
 	    || streq(layout, "lt-dot")
@@ -409,63 +433,66 @@ int dotneato_args_initialize(GVC_t * gvc, int argc, char **argv)
 	    || streq(layout, "")   /* when run as a process from Gvedit on Windows */
 	)
             layout = "dot";
-	i = gvlayout_select(gvc, layout);
+	const int i = gvlayout_select(gvc, layout);
 	if (i == NO_SUPPORT) {
 	    fprintf(stderr, "There is no layout engine support for \"%s\"\n", layout);
-            if (streq(layout, "dot"))
+            if (streq(layout, "dot")) {
 		fprintf(stderr, "Perhaps \"dot -c\" needs to be run (with installer's privileges) to register the plugins?\n");
-	    else 
-		fprintf(stderr, "Use one of:%s\n", gvplugin_list(gvc, API_layout, ""));
+	    } else {
+		const char *const lyts = gvplugin_list(gvc, API_layout, "");
+		if (strlen(lyts) > 1) {
+                    fprintf(stderr, " Use one of:%s\n", lyts);
+		} else {
+		    /* Q: Should 'dot -c' be suggested generally or only when val = "dot"? */
+		    fprintf(stderr, " No layouts found.\nPerhaps \"dot -c\" needs to be run (with installer's privileges) to register the plugins?\n");
+		}
+	    }
 
-	    if (GvExitOnUsage) exit(1);
-	    return(2);
+	    if (GvExitOnUsage) graphviz_exit(1);
+	    return 2;
 	}
     }
 
     /* if no -Txxx, then set default format */
     if (!gvc->jobs || !gvc->jobs->output_langname) {
-	v = gvjobs_output_langname(gvc, "dot");
-	if (!v) {
-//	assert(v);  /* "dot" should always be available as an output format */
+	if (!gvjobs_output_langname(gvc, "dot")) {
 		fprintf(stderr,
 			"Unable to find even the default \"-Tdot\" renderer.  Has the config\nfile been generated by running \"dot -c\" with installer's privileges?\n");
-			return(2);
+			return 2;
 	}
     }
 
     /* set persistent attributes here (if not already set from command line options) */
-    if (!agattr(NULL, AGNODE, "label", 0))
-	agattr(NULL, AGNODE, "label", NODENAME_ESC);
+    if (!agattr_text(NULL, AGNODE, "label", 0))
+	agattr_text(NULL, AGNODE, "label", NODENAME_ESC);
     return 0;
 }
 
-/* getdoubles2ptf:
- * converts a graph attribute in inches to a pointf in points.
+/* converts a graph attribute in inches to a pointf in points.
  * If only one number is given, it is used for both x and y.
  * Returns true if the attribute ends in '!'.
  */
-static boolean getdoubles2ptf(graph_t * g, char *name, pointf * result)
-{
+static bool getdoubles2ptf(graph_t *g, char *name, pointf *result) {
     char *p;
     int i;
     double xf, yf;
     char c = '\0';
-    boolean rv = FALSE;
+    bool rv = false;
 
     if ((p = agget(g, name))) {
 	i = sscanf(p, "%lf,%lf%c", &xf, &yf, &c);
-	if ((i > 1) && (xf > 0) && (yf > 0)) {
+	if (i > 1 && xf > 0 && yf > 0) {
 	    result->x = POINTS(xf);
 	    result->y = POINTS(yf);
 	    if (c == '!')
-		rv = TRUE;
+		rv = true;
 	}
 	else {
 	    c = '\0';
 	    i = sscanf(p, "%lf%c", &xf, &c);
-	    if ((i > 0) && (xf > 0)) {
+	    if (i > 0 && xf > 0) {
 		result->y = result->x = POINTS(xf);
-		if (c == '!') rv = TRUE;
+		if (c == '!') rv = true;
 	    }
 	}
     }
@@ -483,109 +510,46 @@ void getdouble(graph_t * g, char *name, double *result)
     }
 }
 
-#ifdef EXPERIMENTAL_MYFGETS
-/*
- * Potential input filter - e.g. for iconv 
- */
-
-/*
- * myfgets - same api as fgets
- * 
- * gets n chars at a time
- *
- * returns pointer to user buffer,
- * or returns NULL on eof or error.
- */
-static char *myfgets(char * ubuf, int n, FILE * fp)
-{
-    static char *buf;
-    static int bufsz, pos, len;
-    int cnt;
-
-    if (!n) {                   /* a call with n==0 (from aglexinit) resets */
-        ubuf[0] = '\0';
-        pos = len = 0;
-        return NULL;
-    }
-
-    if (!len) {
-	if (n > bufsz) {
-	    bufsz = n;
-	    buf = realloc(buf, bufsz);
-	}
-	if (!(fgets(buf, bufsz, fp))) {
-            ubuf[0] = '\0';
-            return NULL;
-        }
-	len = strlen(buf);
-	pos = 0;
-    }
-
-    cnt = n - 1;
-    if (len < cnt)
-	cnt = len;
-
-    memcpy(ubuf, buf + pos, cnt);
-    pos += cnt;
-    len -= cnt;
-    ubuf[cnt] = '\0';
-
-    return ubuf;
-}
-#endif
-
 graph_t *gvNextInputGraph(GVC_t *gvc)
 {
     graph_t *g = NULL;
     static char *fn;
     static FILE *fp;
-    static FILE *oldfp;
-    static int fidx, gidx;
+    static int gidx;
 
     while (!g) {
 	if (!fp) {
     	    if (!(fn = gvc->input_filenames[0])) {
-		if (fidx++ == 0)
+		if (gvc->fidx++ == 0)
 		    fp = stdin;
 	    }
 	    else {
-		while ((fn = gvc->input_filenames[fidx++]) && !(fp = fopen(fn, "r")))  {
-		    agerr(AGERR, "%s: can't open %s\n", gvc->common.cmdname, fn);
+		while ((fn = gvc->input_filenames[gvc->fidx++]) && !(fp = gv_fopen(fn, "r")))  {
+		    agerrorf("%s: can't open %s: %s\n", gvc->common.cmdname, fn, strerror(errno));
 		    graphviz_errors++;
 		}
 	    }
 	}
 	if (fp == NULL)
 	    break;
-	if (oldfp != fp) {
-	    agsetfile(fn ? fn : "<stdin>");
-	    oldfp = fp;
-	}
-#ifdef EXPERIMENTAL_MYFGETS
-	g = agread_usergets(fp, myfgets);
-#else
-	g = agread(fp,NIL(Agdisc_t*));
-#endif
+	g = agconcat(NULL, fn ? fn : "<stdin>", fp, NULL);
 	if (g) {
 	    gvg_init(gvc, g, fn, gidx++);
 	    break;
 	}
 	if (fp != stdin)
 	    fclose (fp);
-	oldfp = fp = NULL;
+	fp = NULL;
 	gidx = 0;
     }
     return g;
 }
 
-/* findCharset:
- * Check if the charset attribute is defined for the graph and, if
+/* Check if the charset attribute is defined for the graph and, if
  * so, return the corresponding internal value. If undefined, return
  * CHAR_UTF8
  */
-static int findCharset (graph_t * g)
-{
-    int enc;
+static unsigned char findCharset(graph_t *g) {
     char* p;
 
     p = late_nnstring(g,agfindgraphattr(g,"charset"),"utf-8");
@@ -596,62 +560,43 @@ static int findCharset (graph_t * g)
 	|| !strcasecmp(p,"ISO_8859-1")
 	|| !strcasecmp(p,"ISO8859-1")
 	|| !strcasecmp(p,"ISO-IR-100"))
-		enc = CHAR_LATIN1; 
-    else if (!strcasecmp(p,"big-5")
+      return CHAR_LATIN1;
+    if (!strcasecmp(p,"big-5")
 	|| !strcasecmp(p,"big5")) 
-		enc = CHAR_BIG5; 
-    else if (!strcasecmp(p,"utf-8")
+      return CHAR_BIG5;
+    if (!strcasecmp(p,"utf-8")
 	|| !strcasecmp(p,"utf8"))
-		enc = CHAR_UTF8; 
-    else {
-	agerr(AGWARN, "Unsupported charset \"%s\" - assuming utf-8\n", p);
-	enc = CHAR_UTF8; 
-    }
-    return enc;
+      return CHAR_UTF8;
+    agwarningf("Unsupported charset \"%s\" - assuming utf-8\n", p);
+    return CHAR_UTF8;
 }
 
-/* setRatio:
- * Checks "ratio" attribute, if any, and sets enum type.
- */
+/// Checks "ratio" attribute, if any, and sets enum type.
 static void setRatio(graph_t * g)
 {
-    char *p, c;
+    char *p;
     double ratio;
 
-    if ((p = agget(g, "ratio")) && ((c = p[0]))) {
-	switch (c) {
-	case 'a':
-	    if (streq(p, "auto"))
-		GD_drawing(g)->ratio_kind = R_AUTO;
-	    break;
-	case 'c':
-	    if (streq(p, "compress"))
-		GD_drawing(g)->ratio_kind = R_COMPRESS;
-	    break;
-	case 'e':
-	    if (streq(p, "expand"))
-		GD_drawing(g)->ratio_kind = R_EXPAND;
-	    break;
-	case 'f':
-	    if (streq(p, "fill"))
-		GD_drawing(g)->ratio_kind = R_FILL;
-	    break;
-	default:
+    if ((p = agget(g, "ratio"))) {
+	if (streq(p, "auto")) {
+	    GD_drawing(g)->ratio_kind = R_AUTO;
+	} else if (streq(p, "compress")) {
+	    GD_drawing(g)->ratio_kind = R_COMPRESS;
+	} else if (streq(p, "expand")) {
+	    GD_drawing(g)->ratio_kind = R_EXPAND;
+	} else if (streq(p, "fill")) {
+	    GD_drawing(g)->ratio_kind = R_FILL;
+	} else {
 	    ratio = atof(p);
 	    if (ratio > 0.0) {
 		GD_drawing(g)->ratio_kind = R_VALUE;
 		GD_drawing(g)->ratio = ratio;
 	    }
-	    break;
 	}
     }
 }
 
-/*
-	cgraph requires 
-
-*/
-void graph_init(graph_t * g, boolean use_rankdir)
+void graph_init(graph_t * g, bool use_rankdir)
 {
     char *p;
     double xf;
@@ -660,13 +605,14 @@ void graph_init(graph_t * g, boolean use_rankdir)
     static char *fontnamenames[] = {"gd","ps","svg", NULL};
     static int fontnamecodes[] = {NATIVEFONTS,PSFONTS,SVGFONTS,-1};
     int rankdir;
-    GD_drawing(g) = NEW(layout_t);
+    GD_drawing(g) = gv_alloc(sizeof(layout_t));
 
     /* reparseable input */
     if ((p = agget(g, "postaction"))) {   /* requires a graph wrapper for yyparse */
-        char *buf = gmalloc(strlen("digraph {  }") + strlen(p) + 1);
-        sprintf(buf,"%s { %s }",agisdirected(g)?"digraph":"graph",p);
-        agmemconcat(g, buf);
+        agxbuf buf = {0};
+        agxbprint(&buf, "%s { %s }", agisdirected(g) ? "digraph" : "graph", p);
+        agmemconcat(g, agxbuse(&buf));
+        agxbfree(&buf);
     }
 
     /* set this up fairly early in case any string sizes are needed */
@@ -676,12 +622,9 @@ void graph_init(graph_t * g, boolean use_rankdir)
 #ifdef HAVE_SETENV
 	setenv("GDFONTPATH", p, 1);
 #else
-	static char *buf = 0;
-
-	buf = grealloc(buf, strlen("GDFONTPATH=") + strlen(p) + 1);
-	strcpy(buf, "GDFONTPATH=");
-	strcat(buf, p);
-	putenv(buf);
+	static agxbuf buf;
+	agxbprint(&buf, "GDFONTPATH=%s", p);
+	putenv(agxbuse(&buf));
 #endif
     }
 
@@ -689,8 +632,9 @@ void graph_init(graph_t * g, boolean use_rankdir)
 
     if (!HTTPServerEnVar) {
 	Gvimagepath = agget (g, "imagepath");
-	if (!Gvimagepath)
+	if (!Gvimagepath) {
 	    Gvimagepath = Gvfilepath;
+	}
     }
 
     GD_drawing(g)->quantum =
@@ -715,7 +659,7 @@ void graph_init(graph_t * g, boolean use_rankdir)
     if (use_rankdir)
 	SET_RANKDIR (g, (rankdir << 2) | rankdir);
     else
-	SET_RANKDIR (g, (rankdir << 2));
+	SET_RANKDIR(g, rankdir << 2);
 
     xf = late_double(g, agfindgraphattr(g, "nodesep"),
 		DEFAULT_NODESEP, MIN_NODESEP);
@@ -730,26 +674,31 @@ void graph_init(graph_t * g, boolean use_rankdir)
 		xf = MIN_RANKSEP;
 	}
 	if (strstr(p, "equally"))
-	    GD_exact_ranksep(g) = TRUE;
+	    GD_exact_ranksep(g) = true;
     } else
 	xf = DEFAULT_RANKSEP;
     GD_ranksep(g) = POINTS(xf);
 
-    GD_showboxes(g) = late_int(g, agfindgraphattr(g, "showboxes"), 0, 0);
+    {
+	int showboxes = late_int(g, agfindgraphattr(g, "showboxes"), 0, 0);
+	if (showboxes > UCHAR_MAX) {
+	    showboxes = UCHAR_MAX;
+	}
+	GD_showboxes(g) = (unsigned char)showboxes;
+    }
     p = late_string(g, agfindgraphattr(g, "fontnames"), NULL);
     GD_fontnames(g) = maptoken(p, fontnamenames, fontnamecodes);
 
     setRatio(g);
-    GD_drawing(g)->filled =
-	getdoubles2ptf(g, "size", &(GD_drawing(g)->size));
-    getdoubles2ptf(g, "page", &(GD_drawing(g)->page));
+    GD_drawing(g)->filled = getdoubles2ptf(g, "size", &GD_drawing(g)->size);
+    getdoubles2ptf(g, "page", &GD_drawing(g)->page);
 
     GD_drawing(g)->centered = mapbool(agget(g, "center"));
 
     if ((p = agget(g, "rotate")))
-	GD_drawing(g)->landscape = (atoi(p) == 90);
+	GD_drawing(g)->landscape = atoi(p) == 90;
     else if ((p = agget(g, "orientation")))
-	GD_drawing(g)->landscape = ((p[0] == 'l') || (p[0] == 'L'));
+	GD_drawing(g)->landscape = p[0] == 'l' || p[0] == 'L';
     else if ((p = agget(g, "landscape")))
 	GD_drawing(g)->landscape = mapbool(p);
 
@@ -760,10 +709,11 @@ void graph_init(graph_t * g, boolean use_rankdir)
     State = GVBEGIN;
     EdgeLabelsDone = 0;
 
-    GD_drawing(g)->dpi = 0.0;
-    if (((p = agget(g, "dpi")) && p[0])
-	|| ((p = agget(g, "resolution")) && p[0]))
-	GD_drawing(g)->dpi = atof(p);
+    GD_drawing(g)->dpi = late_double(g, agfindgraphattr(g, "dpi"),
+                                     late_double(g,
+                                                 agfindgraphattr(g,
+                                                                 "resolution"),
+                                                 0, 0), 0);
 
     do_graph_label(g);
 
@@ -785,12 +735,11 @@ void graph_init(graph_t * g, boolean use_rankdir)
     N_fontcolor = agfindnodeattr(g, "fontcolor");
     N_label = agfindnodeattr(g, "label");
     if (!N_label)
-	N_label = agattr(g, AGNODE, "label", NODENAME_ESC);
+	N_label = agattr_text(g, AGNODE, "label", NODENAME_ESC);
     N_xlabel = agfindnodeattr(g, "xlabel");
     N_showboxes = agfindnodeattr(g, "showboxes");
     N_penwidth = agfindnodeattr(g, "penwidth");
     N_ordering = agfindnodeattr(g, "ordering");
-    N_margin = agfindnodeattr(g, "margin");
     /* attribs for polygon shapes */
     N_sides = agfindnodeattr(g, "sides");
     N_peripheries = agfindnodeattr(g, "peripheries");
@@ -818,10 +767,7 @@ void graph_init(graph_t * g, boolean use_rankdir)
     E_label = agfindedgeattr(g, "label");
     E_xlabel = agfindedgeattr(g, "xlabel");
     E_label_float = agfindedgeattr(g, "labelfloat");
-    /* vladimir */
     E_dir = agfindedgeattr(g, "dir");
-    E_arrowhead = agfindedgeattr(g, "arrowhead");
-    E_arrowtail = agfindedgeattr(g, "arrowtail");
     E_headlabel = agfindedgeattr(g, "headlabel");
     E_taillabel = agfindedgeattr(g, "taillabel");
     E_labelfontsize = agfindedgeattr(g, "labelfontsize");
@@ -829,7 +775,6 @@ void graph_init(graph_t * g, boolean use_rankdir)
     E_labelfontcolor = agfindedgeattr(g, "labelfontcolor");
     E_labeldistance = agfindedgeattr(g, "labeldistance");
     E_labelangle = agfindedgeattr(g, "labelangle");
-    /* end vladimir */
     E_minlen = agfindedgeattr(g, "minlen");
     E_showboxes = agfindedgeattr(g, "showboxes");
     E_style = agfindedgeattr(g, "style");
@@ -853,8 +798,8 @@ void graph_init(graph_t * g, boolean use_rankdir)
 void graph_cleanup(graph_t *g)
 {
     if (GD_drawing(g) && GD_drawing(g)->xdots)
-	freeXDot ((xdot*)GD_drawing(g)->xdots);
-    if (GD_drawing(g) && GD_drawing(g)->id)
+	freeXDot(GD_drawing(g)->xdots);
+    if (GD_drawing(g))
 	free (GD_drawing(g)->id);
     free(GD_drawing(g));
     GD_drawing(g) = NULL;
@@ -864,10 +809,7 @@ void graph_cleanup(graph_t *g)
     agclean(g, AGRAPH,"Agraphinfo_t");
 }
 
-/* charsetToStr:
- * Given an internal charset value, return a canonical string
- * representation.
- */
+/// Given an internal charset value, return a canonical string representation.
 char*
 charsetToStr (int c)
 {
@@ -884,30 +826,27 @@ charsetToStr (int c)
 	s = "BIG-5";
 	break;
    default :
-	agerr(AGERR, "Unsupported charset value %d\n", c);
+	agerrorf("Unsupported charset value %d\n", c);
 	s = "UTF-8";
 	break;
    }
    return s;
 }
 
-/* do_graph_label:
- * Set characteristics of graph label if it exists.
- * 
- */
+/// Set characteristics of graph label if it exists.
 void do_graph_label(graph_t * sg)
 {
     char *str, *pos, *just;
     int pos_ix;
 
     /* it would be nice to allow multiple graph labels in the future */
-    if ((str = agget(sg, "label")) && (*str != '\0')) {
+    if ((str = agget(sg, "label")) && *str != '\0') {
 	char pos_flag;
 	pointf dimen;
 
 	GD_has_labels(sg->root) |= GRAPH_LABEL;
 
-	GD_label(sg) = make_label((void*)sg, str, (aghtmlstr(str) ? LT_HTML : LT_NONE),
+	GD_label(sg) = make_label(sg, str, aghtmlstr(str), false,
 	    late_double(sg, agfindgraphattr(sg, "fontsize"),
 			DEFAULT_FONTSIZE, MIN_FONTSIZE),
 	    late_nnstring(sg, agfindgraphattr(sg, "fontname"),
@@ -918,12 +857,12 @@ void do_graph_label(graph_t * sg)
 	/* set label position */
 	pos = agget(sg, "labelloc");
 	if (sg != agroot(sg)) {
-	    if (pos && (pos[0] == 'b'))
+	    if (pos && pos[0] == 'b')
 		pos_flag = LABEL_AT_BOTTOM;
 	    else
 		pos_flag = LABEL_AT_TOP;
 	} else {
-	    if (pos && (pos[0] == 't'))
+	    if (pos && pos[0] == 't')
 		pos_flag = LABEL_AT_TOP;
 	    else
 		pos_flag = LABEL_AT_BOTTOM;

@@ -1,14 +1,11 @@
-/* $Id$ $Revision$ */
-/* vim:set shiftwidth=4 ts=8: */
-
 /*************************************************************************
  * Copyright (c) 2011 AT&T Intellectual Property 
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
- * http://www.eclipse.org/legal/epl-v10.html
+ * https://www.eclipse.org/legal/epl-v10.html
  *
- * Contributors: See CVS logs. Details at http://www.graphviz.org/
+ * Contributors: Details at http://www.graphviz.org/
  *************************************************************************/
 
 
@@ -173,7 +170,7 @@ extern char *gvplugin_list(GVC_t * gvc, api_t api, const char *str);
 - (NSData*)renderWithFormat:(NSString *)format
 {
 	char *renderedData = NULL;
-	unsigned int renderedLength = 0;
+	size_t renderedLength = 0;
 	if (gvRenderData(_graphContext, _graph, (char*)[format UTF8String], &renderedData, &renderedLength) != 0)
 		@throw [NSException exceptionWithName:@"GVException" reason:@"bad render" userInfo:nil];
 	return [NSData dataWithBytesNoCopy:renderedData length:renderedLength freeWhenDone:YES];

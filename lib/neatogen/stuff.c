@@ -1,43 +1,36 @@
-/* $Id$ $Revision$ */
-/* vim:set shiftwidth=4 ts=8: */
-
 /*************************************************************************
  * Copyright (c) 2011 AT&T Intellectual Property
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
- * http://www.eclipse.org/legal/epl-v10.html
+ * https://www.eclipse.org/legal/epl-v10.html
  *
- * Contributors: See CVS logs. Details at http://www.graphviz.org/
+ * Contributors: Details at https://graphviz.org
  *************************************************************************/
 
 
 #include "config.h"
-
-#include	"neato.h"
-#include	"stress.h"
+#include	<math.h>
+#include	<neatogen/neato.h>
+#include	<neatogen/stress.h>
+#include	<stdatomic.h>
+#include	<stdlib.h>
 #include	<time.h>
-#ifndef _WIN32
-#include	<unistd.h>
-#endif
+#include	<util/alloc.h>
 
 static double Epsilon2;
+static Agnode_t *choose_node(graph_t *, int);
+static void make_spring(graph_t *, Agnode_t *, Agnode_t *, double);
+static void move_node(graph_t *, int, Agnode_t *);
 
-
-double fpow32(double x)
-{
-    x = sqrt(x);
-    return x * x * x;
-}
-
-double distvec(double *p0, double *p1, double *vec)
+static double distvec(double *p0, double *p1, double *vec)
 {
     int k;
     double dist = 0.0;
 
     for (k = 0; k < Ndim; k++) {
 	vec[k] = p0[k] - p1[k];
-	dist += (vec[k] * vec[k]);
+	dist += vec[k] * vec[k];
     }
     dist = sqrt(dist);
     return dist;
@@ -45,15 +38,13 @@ double distvec(double *p0, double *p1, double *vec)
 
 double **new_array(int m, int n, double ival)
 {
-    double **rv;
-    double *mem;
     int i, j;
 
-    rv = N_NEW(m, double *);
-    mem = N_NEW(m * n, double);
+    double **rv = gv_calloc(m, sizeof(double*));
+    double *mem = gv_calloc(m * n, sizeof(double));
     for (i = 0; i < m; i++) {
 	rv[i] = mem;
-	mem = mem + n;
+	mem += n;
 	for (j = 0; j < n; j++)
 	    rv[i][j] = ival;
     }
@@ -71,14 +62,13 @@ void free_array(double **rv)
 
 static double ***new_3array(int m, int n, int p, double ival)
 {
-    double ***rv;
     int i, j, k;
 
-    rv = N_NEW(m + 1, double **);
+    double ***rv = gv_calloc(m + 1, sizeof(double**));
     for (i = 0; i < m; i++) {
-	rv[i] = N_NEW(n + 1, double *);
+	rv[i] = gv_calloc(n + 1, sizeof(double*));
 	for (j = 0; j < n; j++) {
-	    rv[i][j] = N_NEW(p, double);
+	    rv[i][j] = gv_calloc(p, sizeof(double));
 	    for (k = 0; k < p; k++)
 		rv[i][j][k] = ival;
 	}
@@ -102,9 +92,7 @@ static void free_3array(double ***rv)
     }
 }
 
-
-/* lenattr:
- * Return 1 if attribute not defined
+/* Return 1 if attribute not defined
  * Return 2 if attribute string bad
  */
 static int lenattr(edge_t* e, Agsym_t* index, double* val)
@@ -117,17 +105,15 @@ static int lenattr(edge_t* e, Agsym_t* index, double* val)
     s = agxget(e, index);
     if (*s == '\0') return 1;
 
-    if ((sscanf(s, "%lf", val) < 1) || (*val < 0) || ((*val == 0) && !Nop)) {
-	agerr(AGWARN, "bad edge len \"%s\"", s);
+    if (sscanf(s, "%lf", val) < 1 || *val < 0 || (*val == 0 && !Nop)) {
+	agwarningf("bad edge len \"%s\"", s);
 	return 2;
     }
     else
 	return 0;
 }
 
-
-/* degreeKind;
- * Returns degree of n ignoring loops and multiedges.
+/* Returns degree of n ignoring loops and multiedges.
  * Returns 0, 1 or many (2)
  * For case of 1, returns other endpoint of edge.
  */
@@ -141,8 +127,8 @@ static int degreeKind(graph_t * g, node_t * n, node_t ** op)
 	if (aghead(ep) == agtail(ep))
 	    continue;		/* ignore loops */
 	if (deg == 1) {
-	    if (((agtail(ep) == n) && (aghead(ep) == other)) ||	/* ignore multiedge */
-		((agtail(ep) == other) && (aghead(ep) == n)))
+	    if ((agtail(ep) == n && aghead(ep) == other) ||	/* ignore multiedge */
+		(agtail(ep) == other && aghead(ep) == n))
 		continue;
 	    return 2;
 	} else {		/* deg == 0 */
@@ -157,9 +143,7 @@ static int degreeKind(graph_t * g, node_t * n, node_t ** op)
     return deg;
 }
 
-
-/* prune:
- * np is at end of a chain. If its degree is 0, remove it.
+/* np is at end of a chain. If its degree is 0, remove it.
  * If its degree is 1, remove it and recurse.
  * If its degree > 1, stop.
  * The node next is the next node to be visited during iteration.
@@ -209,8 +193,7 @@ static double setEdgeLen(graph_t * G, node_t * np, Agsym_t* lenx, double dfltlen
     return total_len;
 }
 
-/* scan_graph_mode:
- * Prepare the graph and data structures depending on the layout mode.
+/* Prepare the graph and data structures depending on the layout mode.
  * If Reduce is true, eliminate singletons and trees. Since G may be a
  * subgraph, we remove the nodes from the root graph.
  * Return the number of nodes in the reduced graph.
@@ -246,7 +229,7 @@ int scan_graph_mode(graph_t * G, int mode)
     nV = agnnodes(G);
     nE = agnedges(G);
 
-    lenx = agattr(G, AGEDGE, "len", 0);
+    lenx = agattr_text(G, AGEDGE, "len", 0);
     if (mode == MODE_KK) {
 	Epsilon = .0001 * nV;
 	getdouble(G, "epsilon", &Epsilon);
@@ -254,11 +237,20 @@ int scan_graph_mode(graph_t * G, int mode)
 	    Damping = atof(str);
 	else
 	    Damping = .99;
-	GD_neato_nlist(G) = N_NEW(nV + 1, node_t *);
+	GD_neato_nlist(G) = gv_calloc(nV + 1, sizeof(node_t*));
 	for (i = 0, np = agfstnode(G); np; np = agnxtnode(G, np)) {
 	    GD_neato_nlist(G)[i] = np;
 	    ND_id(np) = i++;
 	    ND_heapindex(np) = -1;
+	    total_len += setEdgeLen(G, np, lenx, dfltlen);
+	}
+    } else if (mode == MODE_SGD) {
+	Epsilon = .01;
+	getdouble(G, "epsilon", &Epsilon);
+	GD_neato_nlist(G) = gv_calloc(nV + 1, sizeof(node_t *));
+	for (i = 0, np = agfstnode(G); np; np = agnxtnode(G, np)) {
+	    GD_neato_nlist(G)[i] = np;
+	    ND_id(np) = i++;
 	    total_len += setEdgeLen(G, np, lenx, dfltlen);
 	}
     } else {
@@ -272,11 +264,11 @@ int scan_graph_mode(graph_t * G, int mode)
 
     str = agget(G, "defaultdist");
     if (str && str[0])
-	Initial_dist = MAX(Epsilon, atof(str));
+	Initial_dist = fmax(Epsilon, atof(str));
     else
 	Initial_dist = total_len / (nE > 0 ? nE : 1) * sqrt(nV) + 1;
 
-    if (!Nop && (mode == MODE_KK)) {
+    if (!Nop && mode == MODE_KK) {
 	GD_dist(G) = new_array(nV, nV, Initial_dist);
 	GD_spring(G) = new_array(nV, nV, 1.0);
 	GD_sum_t(G) = new_array(nV, Ndim, 1.0);
@@ -327,7 +319,7 @@ void initial_positions(graph_t * G, int nG)
 {
     int init, i;
     node_t *np;
-    static int once = 0;
+    static atomic_flag once;
 
     if (Verbose)
 	fprintf(stderr, "Setting initial positions\n");
@@ -335,9 +327,8 @@ void initial_positions(graph_t * G, int nG)
     init = checkStart(G, nG, INIT_RANDOM);
     if (init == INIT_REGULAR)
 	return;
-    if ((init == INIT_SELF) && (once == 0)) {
-	agerr(AGWARN, "start=%s not supported with mode=self - ignored\n");
-	once = 1;
+    if (init == INIT_SELF && !atomic_flag_test_and_set(&once)) {
+	agwarningf("start=0 not supported with mode=self - ignored\n");
     }
 
     for (i = 0; (np = GD_neato_nlist(G)[i]); i++) {
@@ -365,7 +356,7 @@ void diffeq_model(graph_t * G, int nG)
 	for (j = 0; j < i; j++) {
 	    f = Spring_coeff / (D[i][j] * D[i][j]);
 	    if ((e = agfindedge(G, GD_neato_nlist(G)[i], GD_neato_nlist(G)[j])))
-		f = f * ED_factor(e);
+		f *= ED_factor(e);
 	    K[i][j] = K[j][i] = f;
 	}
     }
@@ -395,9 +386,7 @@ void diffeq_model(graph_t * G, int nG)
     }
 }
 
-/* total_e:
- * Return 2*energy of system.
- */
+/// return 2 × energy of system
 static double total_e(graph_t * G, int nG)
 {
     int i, j, d;
@@ -411,7 +400,7 @@ static double total_e(graph_t * G, int nG)
 	for (j = i + 1; j < nG; j++) {
 	    jp = GD_neato_nlist(G)[j];
 	    for (t0 = 0.0, d = 0; d < Ndim; d++) {
-		t1 = (ND_pos(ip)[d] - ND_pos(jp)[d]);
+		t1 = ND_pos(ip)[d] - ND_pos(jp)[d];
 		t0 += t1 * t1;
 	    }
 	    e = e + GD_spring(G)[i][j] *
@@ -434,18 +423,18 @@ void solve_model(graph_t * G, int nG)
     if (Verbose) {
 	fprintf(stderr, "\nfinal e = %f", total_e(G, nG));
 	fprintf(stderr, " %d%s iterations %.2f sec\n",
-		GD_move(G), (GD_move(G) == MaxIter ? "!" : ""),
+		GD_move(G), GD_move(G) == MaxIter ? "!" : "",
 		elapsed_sec());
     }
     if (GD_move(G) == MaxIter)
-	agerr(AGWARN, "Max. iterations (%d) reached on graph %s\n",
+	agwarningf("Max. iterations (%d) reached on graph %s\n",
 	      MaxIter, agnameof(G));
 }
 
-void update_arrays(graph_t * G, int nG, int i)
+static void update_arrays(graph_t * G, int nG, int i)
 {
     int j, k;
-    double del[MAXDIM], dist, old;
+    double del[MAXDIM], dist;
     node_t *vi, *vj;
 
     vi = GD_neato_nlist(G)[i];
@@ -457,20 +446,19 @@ void update_arrays(graph_t * G, int nG, int i)
 	vj = GD_neato_nlist(G)[j];
 	dist = distvec(ND_pos(vi), ND_pos(vj), del);
 	for (k = 0; k < Ndim; k++) {
-	    old = GD_t(G)[i][j][k];
 	    GD_t(G)[i][j][k] =
 		GD_spring(G)[i][j] * (del[k] -
 				      GD_dist(G)[i][j] * del[k] / dist);
 	    GD_sum_t(G)[i][k] += GD_t(G)[i][j][k];
-	    old = GD_t(G)[j][i][k];
+	    const double old = GD_t(G)[j][i][k];
 	    GD_t(G)[j][i][k] = -GD_t(G)[i][j][k];
-	    GD_sum_t(G)[j][k] += (GD_t(G)[j][i][k] - old);
+	    GD_sum_t(G)[j][k] += GD_t(G)[j][i][k] - old;
 	}
     }
 }
 
 #define Msub(i,j)  M[(i)*Ndim+(j)]
-void D2E(graph_t * G, int nG, int n, double *M)
+static void D2E(graph_t * G, int nG, int n, double *M)
 {
     int i, l, k;
     node_t *vi, *vn;
@@ -489,25 +477,19 @@ void D2E(graph_t * G, int nG, int n, double *M)
 	sq = 0.0;
 	for (k = 0; k < Ndim; k++) {
 	    t[k] = ND_pos(vn)[k] - ND_pos(vi)[k];
-	    sq += (t[k] * t[k]);
+	    sq += t[k] * t[k];
 	}
-	scale = 1 / fpow32(sq);
+	scale = 1 / pow(sq, 1.5);
 	for (k = 0; k < Ndim; k++) {
 	    for (l = 0; l < k; l++)
 		Msub(l, k) += K[n][i] * D[n][i] * t[k] * t[l] * scale;
 	    Msub(k, k) +=
-		K[n][i] * (1.0 - D[n][i] * (sq - (t[k] * t[k])) * scale);
+		K[n][i] * (1.0 - D[n][i] * (sq - t[k] * t[k]) * scale);
 	}
     }
     for (k = 1; k < Ndim; k++)
 	for (l = 0; l < k; l++)
 	    Msub(k, l) = Msub(l, k);
-}
-
-void final_energy(graph_t * G, int nG)
-{
-    fprintf(stderr, "iterations = %d final e = %f\n", GD_move(G),
-	    total_e(G, nG));
 }
 
 node_t *choose_node(graph_t * G, int nG)
@@ -516,22 +498,10 @@ node_t *choose_node(graph_t * G, int nG)
     double m, max;
     node_t *choice, *np;
     static int cnt = 0;
-#if 0
-    double e;
-    static double save_e = MAXDOUBLE;
-#endif
 
     cnt++;
     if (GD_move(G) >= MaxIter)
 	return NULL;
-#if 0
-    if ((cnt % 100) == 0) {
-	e = total_e(G, nG);
-	if (e - save_e > 0)
-	    return NULL;
-	save_e = e;
-    }
-#endif
     max = 0.0;
     choice = NULL;
     for (i = 0; i < nG; i++) {
@@ -539,7 +509,7 @@ node_t *choose_node(graph_t * G, int nG)
 	if (ND_pinned(np) > P_SET)
 	    continue;
 	for (m = 0.0, k = 0; k < Ndim; k++)
-	    m += (GD_sum_t(G)[i][k] * GD_sum_t(G)[i][k]);
+	    m += GD_sum_t(G)[i][k] * GD_sum_t(G)[i][k];
 	/* could set the color=energy of the node here */
 	if (m > max) {
 	    choice = np;
@@ -549,17 +519,11 @@ node_t *choose_node(graph_t * G, int nG)
     if (max < Epsilon2)
 	choice = NULL;
     else {
-	if (Verbose && (cnt % 100 == 0)) {
+	if (Verbose && cnt % 100 == 0) {
 	    fprintf(stderr, "%.3f ", sqrt(max));
 	    if (cnt % 1000 == 0)
 		fprintf(stderr, "\n");
 	}
-#if 0
-	e = total_e(G, nG);
-	if (fabs((e - save_e) / save_e) < 1e-5) {
-	    choice = NULL;
-	}
-#endif
     }
     return choice;
 }
@@ -567,10 +531,11 @@ node_t *choose_node(graph_t * G, int nG)
 void move_node(graph_t * G, int nG, node_t * n)
 {
     int i, m;
-    static double *a, b[MAXDIM], c[MAXDIM];
+    double b[MAXDIM] = {0};
+    double c[MAXDIM] = {0};
 
     m = ND_id(n);
-    a = ALLOC(Ndim * Ndim, a, double);
+    double *a = gv_calloc((size_t)Ndim * Ndim, sizeof(double));
     D2E(G, nG, m, a);
     for (i = 0; i < Ndim; i++)
 	c[i] = -GD_sum_t(G)[m][i];
@@ -589,13 +554,14 @@ void move_node(graph_t * G, int nG, node_t * n)
 	sum = sqrt(sum);
 	fprintf(stderr, "%s %.3f\n", agnameof(n), sum);
     }
+    free(a);
 }
 
 static node_t **Heap;
 static int Heapsize;
 static node_t *Src;
 
-void heapup(node_t * v)
+static void heapup(node_t * v)
 {
     int i, par;
     node_t *u;
@@ -612,7 +578,7 @@ void heapup(node_t * v)
     }
 }
 
-void heapdown(node_t * v)
+static void heapdown(node_t * v)
 {
     int i, left, right, c;
     node_t *u;
@@ -620,8 +586,7 @@ void heapdown(node_t * v)
     i = ND_heapindex(v);
     while ((left = 2 * i + 1) < Heapsize) {
 	right = left + 1;
-	if ((right < Heapsize)
-	    && (ND_dist(Heap[right]) < ND_dist(Heap[left])))
+	if (right < Heapsize && ND_dist(Heap[right]) < ND_dist(Heap[left]))
 	    c = right;
 	else
 	    c = left;
@@ -670,7 +635,7 @@ void shortest_path(graph_t * G, int nG)
 {
     node_t *v;
 
-    Heap = N_NEW(nG + 1, node_t *);
+    Heap = gv_calloc(nG + 1, sizeof(node_t*));
     if (Verbose) {
 	fprintf(stderr, "Calculating shortest paths: ");
 	start_timer();

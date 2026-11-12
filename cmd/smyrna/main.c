@@ -1,55 +1,44 @@
-/* $Id$Revision: */
-/* vim:set shiftwidth=4 ts=8: */
-
 /*************************************************************************
- * Copyright (c) 2011 AT&T Intellectual Property 
+ * Copyright (c) 2011 AT&T Intellectual Property
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
- * http://www.eclipse.org/legal/epl-v10.html
+ * https://www.eclipse.org/legal/epl-v10.html
  *
- * Contributors: See CVS logs. Details at http://www.graphviz.org/
+ * Contributors: Details at https://graphviz.org
  *************************************************************************/
 
-
-#include "config.h"
 #include "builddate.h"
-//windows.h for win machines
+#include "config.h"
+// windows.h for win machines
 #if defined(_WIN32) && !defined(__CYGWIN__)
-#define WIN32_LEAN_AND_MEAN 1
 #include <windows.h>
 #include <windowsx.h>
 #endif
+#include "glexpose.h"
+#include "gltemplate.h"
+#include "glutrender.h"
+#include "gui/frmobjectui.h"
+#include "gui/gui.h"
+#include "gui/menucallbacks.h"
+#include "gvprpipe.h"
+#include "viewport.h"
+#include <assert.h>
+#include <glade/glade.h>
 #include <gtk/gtk.h>
 #include <gtk/gtkgl.h>
-#include <glade/glade.h>
-#include "gui.h"
-#include "viewport.h"
-#include "support.h"
-#include "menucallbacks.h"
-#include "gltemplate.h"
-#include "memory.h"
-#include "gvprpipe.h"
-#include "frmobjectui.h"
-#ifdef ENABLE_NLS
-#include "libintl.h"
-#endif
-#include <assert.h>
-#include "glexpose.h"
-#include "glutrender.h"
 
 #include <getopt.h>
+#include <stdlib.h>
+#include <string.h>
+#include <util/agxbuf.h>
+#include <util/alloc.h>
+#include <util/exit.h>
+#include <util/gv_find_me.h>
+#include <util/path.h>
 
-#ifdef G_OS_WIN32
-gchar *package_prefix;
-gchar *package_data_dir;
-#endif
-gchar *package_locale_dir;
-static char *smyrnaDir;		/* path to directory containin smyrna data files */
-char *smyrnaGlade;
-unsigned char SmyrnaVerbose;
-int width,height;/*glut window size*/
-
+static char *smyrnaDir; ///< path to directory containing smyrna data files
+static char *smyrnaGlade;
 
 /* smyrnaPath:
  * Construct pathname for smyrna data file.
@@ -58,251 +47,183 @@ int width,height;/*glut window size*/
  * and constructs a complete pathname.
  * The returned string is malloced, so the application should free
  * it later.
- * Returns NULL on error.
  */
-char *smyrnaPath(char *suffix)
-{
-    char *buf;
-    static int baselen;
-    int slen;
-#ifdef _WIN32
-    char *pathSep = "\\";
-#else
-    char *pathSep = "/";
-#endif
-    assert(smyrnaDir);
+char *smyrnaPath(char *suffix) {
+  const char pathSep = PATH_SEPARATOR;
+  assert(smyrnaDir);
 
-    if (baselen == 0) {
-	baselen = (int)strlen(smyrnaDir) + 2;
-    }
-    slen = (int)strlen(suffix);
-    buf = N_NEW(baselen+slen, char);
-    sprintf(buf, "%s%s%s", smyrnaDir, pathSep, suffix);
-    return buf;
+  agxbuf buf = {0};
+  agxbprint(&buf, "%s%c%s", smyrnaDir, pathSep, suffix);
+  return agxbdisown(&buf);
 }
 
-static char *useString = "Usage: smyrns [-v?] <file>\n\
+static char *useString = "Usage: smyrna [-v?] <file>\n\
   -f<WxH:bits@rate>         - full-screen mode\n\
   -e         - draw edges as splines if available\n\
   -v         - verbose\n\
   -?         - print usage\n";
 
-static void usage(int v)
-{
-    fputs(useString, stdout);
-    exit(v);
+static void usage(int v) {
+  fputs(useString, stdout);
+  graphviz_exit(v);
 }
 
 static char *Info[] = {
-    "smyrna",                   /* Program */
-    PACKAGE_VERSION,            /* Version */
-    BUILDDATE                   /* Build Date */
+    "smyrna",        /* Program */
+    PACKAGE_VERSION, /* Version */
+    BUILDDATE        /* Build Date */
 };
 
+static char *parseArgs(int argc, char *argv[], ViewInfo *viewinfo) {
+  int c;
 
-static char *parseArgs(int argc, char *argv[], ViewInfo * view)
-{
-    unsigned int c;
+  while ((c = getopt(argc, argv, ":eKf:txvV?")) != -1) {
+    switch (c) {
+    case 'e':
+      viewinfo->drawSplines = 1;
+      break;
+    case 'v': // FIXME: deprecate and remove -v in future
+      break;
+    case 'f':
+      viewinfo->guiMode = GUI_FULLSCREEN;
+      viewinfo->optArg = optarg;
+      break;
 
-    while ((c = getopt(argc, argv, ":eKf:txvV?")) != -1) {
-	switch (c) {
-	case 'e':
-	    view->drawSplines = 1;
-	    break;
-	case 'v':
-	    SmyrnaVerbose = 1;
-	    break;
-#if 0
-	case 't':
-	    view->dfltViewType = VT_TOPVIEW;
-	    break;
-	case 'x':
-	    view->dfltViewType = VT_XDOT;
-	    break;
-	case 'K':
-	    view->dfltEngine = s2layout(optarg);
-	    break;
-#endif
-	case 'f':
-	    view->guiMode=GUI_FULLSCREEN;
-	    view->optArg=strdup(optarg);
-	    break;
-
-	case 'V':
-	    fprintf(stderr, "%s version %s (%s)\n",
-		    Info[0], Info[1], Info[2]);
-	    exit (0);
-	    break;
-	case '?':
-	    if (optopt == '?')
-		usage(0);
-	    else
-		fprintf(stderr,
-			"smyrna: option -%c unrecognized - ignored\n",
-			optopt);
-	    break;
-	}
+    case 'V':
+      fprintf(stderr, "%s version %s (%s)\n", Info[0], Info[1], Info[2]);
+      graphviz_exit(0);
+      break;
+    case '?':
+      if (optopt == '\0' || optopt == '?')
+        usage(0);
+      else {
+        fprintf(stderr, "smyrna: option -%c unrecognized\n", optopt);
+        usage(1);
+      }
+      break;
     }
+  }
 
-    if (optind < argc)
-	return argv[optind];
-    else
-	return NULL;
+  if (optind < argc)
+    return argv[optind];
+  else
+    return NULL;
 }
 
-#ifdef UNUSED
-static void close_cgraph(Agraph_t * g)
-{
-    Agnode_t *v;
-    for (v = agfstnode(g); v; v = agnxtnode(g, v)) {
-	agdelrec(v, "temp_node_record");
-    }
-    agclose(g);
-}
+static void windowedMode(int argc, char *argv[]) {
+  GdkGLConfig *glconfig;
+  /*combo box to show loaded graphs */
+  GtkComboBox *graphComboBox;
 
-#endif
-void display() 
-{
-   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-   glLoadIdentity();
-   glexpose_main(view);
-   glutSwapBuffers();
+  gtk_set_locale();
+  gtk_init(&argc, &argv);
+  if (!(smyrnaGlade))
+    smyrnaGlade = smyrnaPath("smyrna.glade");
+  xml = glade_xml_new(smyrnaGlade, NULL, NULL);
 
-}
-#if UNUSED
-static void glutMode()
-{
-    glutInitWindowSize(512,512);
-    glutInitDisplayMode ( GLUT_RGB | GLUT_DOUBLE | GLUT_DEPTH);
-    glutCreateWindow("The glut hello world program");
-    glutDisplayFunc(display);
-  
-    glutMainLoop(); // Infinite event loop
-}
-#endif
+  GtkWidget *gladewidget = glade_xml_get_widget(xml, "frmMain");
+  gtk_widget_show(gladewidget);
+  g_signal_connect(gladewidget, "destroy", G_CALLBACK(mQuitSlot), NULL);
+  glade_xml_signal_autoconnect(xml);
+  gtk_gl_init(0, 0);
+  /* Configure OpenGL framebuffer. */
+  glconfig = configure_gl();
+  gladewidget = glade_xml_get_widget(xml, "hbox11");
 
-static void windowedMode(int argc, char *argv[])
-{
-    GdkGLConfig *glconfig;
-    /*combo box to show loaded graphs */
-    GtkComboBox *graphComboBox;
-
-    gtk_set_locale();
-    gtk_init(&argc, &argv);
-    if (!(smyrnaGlade))
-	smyrnaGlade = smyrnaPath("smyrna.glade");
-    xml = glade_xml_new(smyrnaGlade, NULL, NULL);
-
-    gladewidget = glade_xml_get_widget(xml, "frmMain");
-    gtk_widget_show(gladewidget);
-    g_signal_connect((gpointer) gladewidget, "destroy",
-		     G_CALLBACK(mQuitSlot), NULL);
-    glade_xml_signal_autoconnect(xml);
-    gtk_gl_init(0, 0);
-    /* Configure OpenGL framebuffer. */
-    glconfig = configure_gl();
-//      gladewidget = glade_xml_get_widget(xml, "vbox2");
-    gladewidget = glade_xml_get_widget(xml, "hbox11");
-
-    gtk_widget_hide(glade_xml_get_widget(xml, "vbox13"));
-    gtk_window_set_deletable ((GtkWindow*)glade_xml_get_widget(xml, "dlgSettings"),0);
-    gtk_window_set_deletable ((GtkWindow*)glade_xml_get_widget(xml, "frmTVNodes"),0);
-    create_window(glconfig, gladewidget);
-    change_cursor(GDK_TOP_LEFT_ARROW);
+  gtk_widget_hide(glade_xml_get_widget(xml, "vbox13"));
+  gtk_window_set_deletable(
+      (GtkWindow *)glade_xml_get_widget(xml, "dlgSettings"), 0);
+  gtk_window_set_deletable((GtkWindow *)glade_xml_get_widget(xml, "frmTVNodes"),
+                           0);
+  create_window(glconfig, gladewidget);
+  change_cursor(GDK_TOP_LEFT_ARROW);
 
 #ifndef _WIN32
-    glutInit(&argc, argv);
+  glutInit(&argc, argv);
 #endif
 
-    gladewidget = glade_xml_get_widget(xml, "hbox13");
-    graphComboBox = (GtkComboBox *) gtk_combo_box_new_text();
-    gtk_box_pack_end((GtkBox*)gladewidget, (GtkWidget*)graphComboBox, 1, 1, 10);
-    gtk_widget_show((GtkWidget*)graphComboBox);
-    view->graphComboBox = graphComboBox;
+  gladewidget = glade_xml_get_widget(xml, "hbox13");
+  graphComboBox = (GtkComboBox *)gtk_combo_box_new_text();
+  gtk_box_pack_end((GtkBox *)gladewidget, (GtkWidget *)graphComboBox, 1, 1, 10);
+  gtk_widget_show((GtkWidget *)graphComboBox);
+  view->graphComboBox = graphComboBox;
 
-    if(view->guiMode!=GUI_FULLSCREEN)
-	gtk_main();
+  if (view->guiMode != GUI_FULLSCREEN)
+    gtk_main();
 }
 
+/// find an absolute path to where Smyrna auxiliary files are stored
+static char *find_share(void) {
 
+  // find the path to the `smyrna` binary
+  char *smyrna_exe = gv_find_me();
+  if (smyrna_exe == NULL) {
+    fputs("failed to find path to self\n", stderr);
+    graphviz_exit(EXIT_FAILURE);
+  }
 
+  // assume it is of the form …/bin/smyrna[.exe] and construct
+  // …/share/graphviz/smyrna
 
-int main(int argc, char *argv[])
-{
-    smyrnaDir = getenv("SMYRNA_PATH");
-    if (!smyrnaDir) {
-#ifdef _WIN32
-#define BSZ 1024
-#define SMYRNA "\\share\\graphviz\\smyrna"
+  char *slash = strrchr(smyrna_exe, PATH_SEPARATOR);
+  if (slash == NULL) {
+    fprintf(stderr, "no path separator in path to self, %s\n", smyrna_exe);
+    free(smyrna_exe);
+    graphviz_exit(EXIT_FAILURE);
+  }
 
-	int r;
-	char line[BSZ];
-	char* s;
-	MEMORY_BASIC_INFORMATION mbi;
+  *slash = '\0';
+  slash = strrchr(smyrna_exe, PATH_SEPARATOR);
+  if (slash == NULL) {
+    fprintf(stderr, "no path separator in directory containing self, %s\n",
+            smyrna_exe);
+    free(smyrna_exe);
+    graphviz_exit(EXIT_FAILURE);
+  }
 
-	if (VirtualQuery (&main, &mbi, sizeof(mbi)) == 0) {
-	    fprintf (stderr,"failed to get handle for executable.\n");
-	    return 1;
-	}
-	r = GetModuleFileName ((HMODULE)mbi.AllocationBase, line, BSZ);
-	if (!r || (r == BSZ)) {
-	    fprintf (stderr,"failed to get path for executable.\n");
-	    return 1;
-	}
+  *slash = '\0';
+  size_t share_len = strlen(smyrna_exe) + strlen("/share/graphviz/smyrna") + 1;
+  char *share = gv_alloc(share_len);
+  snprintf(share, share_len, "%s%cshare%cgraphviz%csmyrna", smyrna_exe,
+           PATH_SEPARATOR, PATH_SEPARATOR, PATH_SEPARATOR);
+  free(smyrna_exe);
 
-	/* line contains path to smyrna: "$GVROOT\bin\smyrna.exe" 
-	 * We want to obtain $GVROOT. We find the second rightmost '\'
-	 * and store a '\0' there.
- 	 */
-	s = strrchr(line,'\\');
-	if (!s) {
-	    fprintf (stderr,"no backslash in path %s.\n", line);
-	    return 1;
-	}
-	while ((s != line) && (*(--s) != '\\')) ;
-	if (s == line) {
-	    fprintf (stderr,"no backslash in path %s.\n", line);
-	    return 1;
-	}
-	*s = '\0';
+  return share;
+}
 
-	smyrnaDir = N_NEW(strlen(line)+sizeof(SMYRNA), char);
-	strcpy (smyrnaDir, line);
-	strcat(smyrnaDir, "\\share\\graphviz\\smyrna");
-#else
-	smyrnaDir = SMYRNA_PATH;
-#endif
-    }
-    load_attributes();
+int main(int argc, char *argv[]) {
+  smyrnaDir = getenv("SMYRNA_PATH");
+  if (!smyrnaDir) {
+    smyrnaDir = find_share();
+  }
 
+  char *package_locale_dir;
 #ifdef G_OS_WIN32
-    package_prefix =
-	g_win32_get_package_installation_directory(NULL, NULL);
-    package_data_dir = g_build_filename(package_prefix, "share", NULL);
+  {
+    char *package_prefix =
+        g_win32_get_package_installation_directory(NULL, NULL);
     package_locale_dir =
-	g_build_filename(package_prefix, "share", "locale", NULL);
-#else
-    package_locale_dir = g_build_filename(smyrnaDir, "locale", NULL);
-#endif				/* # */
-#ifdef ENABLE_NLS
-    bindtextdomain(GETTEXT_PACKAGE, package_locale_dir);
-    bind_textdomain_codeset(GETTEXT_PACKAGE, "UTF-8");
-    textdomain(GETTEXT_PACKAGE);
-#endif
-    view = NEW(ViewInfo);
-    init_viewport(view);
-    view->initFileName = parseArgs(argc, argv, view);
-    if(view->initFileName)
-	view->initFile=1;
-
-    if(view->guiMode==GUI_FULLSCREEN)
-	cb_glutinit(0,0,800,600,32,75,1,&argc,argv,view->optArg);
-    else
-	windowedMode(argc, argv);
-#ifdef G_OS_WIN32
+        g_build_filename(package_prefix, "share", "locale", NULL);
     g_free(package_prefix);
-    g_free(package_data_dir);
-#endif
-    g_free(package_locale_dir);
-    return 0;
+  }
+#else
+  package_locale_dir = g_build_filename(smyrnaDir, "locale", NULL);
+#endif /* # */
+  view = gv_alloc(sizeof(ViewInfo));
+  init_viewport(view);
+  view->initFileName = parseArgs(argc, argv, view);
+  if (view->initFileName)
+    view->initFile = 1;
+
+  if (view->guiMode == GUI_FULLSCREEN)
+    cb_glutinit(800, 600, &argc, argv, view->optArg);
+  else
+    windowedMode(argc, argv);
+  g_free(package_locale_dir);
+  graphviz_exit(0);
 }
+
+/**
+ * @dir .
+ * @brief interactive graph viewer
+ */

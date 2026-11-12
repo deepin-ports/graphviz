@@ -1,16 +1,19 @@
-/* $Id$ $Revision$ */
-/* vim:set shiftwidth=4 ts=8: */
+/**
+ * @file
+ * @brief API fdpgen/fdp.h: @ref fdp_init_node_edge, @ref fdp_cleanup
+ */
 
 /*************************************************************************
  * Copyright (c) 2011 AT&T Intellectual Property 
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
- * http://www.eclipse.org/legal/epl-v10.html
+ * https://www.eclipse.org/legal/epl-v10.html
  *
- * Contributors: See CVS logs. Details at http://www.graphviz.org/
+ * Contributors: Details at https://graphviz.org
  *************************************************************************/
 
+#include "config.h"
 
 /* fdpinit.c:
  * Written by Emden R. Gansner
@@ -21,9 +24,11 @@
 /* uses PRIVATE interface */
 #define FDP_PRIVATE 1
 
-#include    "tlayout.h"
-#include    "neatoprocs.h"
-#include    "agxbuf.h"
+#include    <fdpgen/tlayout.h>
+#include    <neatogen/neatoprocs.h>
+#include    <stdbool.h>
+#include    <util/agxbuf.h>
+#include    <util/alloc.h>
 
 static void initialPositions(graph_t * g)
 {
@@ -35,10 +40,10 @@ static void initialPositions(graph_t * g)
     char *p;
     char c;
 
-    possym = agattr(g,AGNODE, "pos", NULL);
+    possym = agattr_text(g,AGNODE, "pos", NULL);
     if (!possym)
 	return;
-    pinsym = agattr(g,AGNODE, "pin", NULL);
+    pinsym = agattr_text(g,AGNODE, "pin", NULL);
     for (i = 0; (np = GD_neato_nlist(g)[i]); i++) {
 	p = agxget(np, possym);
 	if (p[0]) {
@@ -51,7 +56,7 @@ static void initialPositions(graph_t * g)
 			pvec[j] = pvec[j] / PSinputscale;
 		}
 		ND_pinned(np) = P_SET;
-		if ((c == '!')
+		if (c == '!'
 		    || (pinsym && mapbool(agxget(np, pinsym))))
 		    ND_pinned(np) = P_PIN;
 	    } else
@@ -66,7 +71,7 @@ static void initialPositions(graph_t * g)
  */
 static void init_edge(edge_t * e, attrsym_t * E_len)
 {
-    agbindrec(e, "Agedgeinfo_t", sizeof(Agedgeinfo_t), TRUE);	//node custom data
+    agbindrec(e, "Agedgeinfo_t", sizeof(Agedgeinfo_t), true);	//node custom data
     ED_factor(e) = late_double(e, E_weight, 1.0, 0.0);
     ED_dist(e) = late_double(e, E_len, fdp_parms->K, 0.0);
 
@@ -76,7 +81,7 @@ static void init_edge(edge_t * e, attrsym_t * E_len)
 static void init_node(node_t * n)
 {
     common_init_node(n);
-    ND_pos(n) = N_NEW(GD_ndim(agraphof(n)), double);
+    ND_pos(n) = gv_calloc(GD_ndim(agraphof(n)), sizeof(double));
     gv_nodesize(n, GD_flip(agraphof(n)));
 }
 
@@ -87,33 +92,29 @@ void fdp_init_node_edge(graph_t * g)
     edge_t *e;
     int nn;
     int i;
-    /* ndata* alg; */
 
-    aginit(g, AGNODE, "Agnodeinfo_t", sizeof(Agnodeinfo_t), TRUE);
+    aginit(g, AGNODE, "Agnodeinfo_t", sizeof(Agnodeinfo_t), true);
     processClusterEdges(g);
 
     /* Get node count after processClusterEdges(), as this function may
      * add new nodes.
      */
     nn = agnnodes(g);
-    /* alg = N_NEW(nn, ndata); */
-    GD_neato_nlist(g) = N_NEW(nn + 1, node_t *);
+    GD_neato_nlist(g) = gv_calloc(nn + 1, sizeof(node_t*));
 
     for (i = 0, n = agfstnode(g); n; n = agnxtnode(g, n)) {
 	init_node (n);
-	/* ND_alg(n) = alg + i; */
 	GD_neato_nlist(g)[i] = n;
 	ND_id(n) = i++;
     }
 
-    E_len = agattr(g,AGEDGE, "len", NULL);
+    E_len = agattr_text(g,AGEDGE, "len", NULL);
     for (n = agfstnode(g); n; n = agnxtnode(g, n)) {
 	for (e = agfstout(g, n); e; e = agnxtout(g, e)) {
 	    init_edge(e, E_len);
 	}
     }
     initialPositions(g);
-
 }
 
 static void cleanup_subgs(graph_t * g)
@@ -131,8 +132,6 @@ static void cleanup_subgs(graph_t * g)
 	cleanup_subgs(subg);
     }
     free (GD_clust(g));
-    if (g != agroot(g))
-	agdelrec(g, "Agraphinfo_t");				
 }
 
 static void fdp_cleanup_graph(graph_t * g)
@@ -155,3 +154,13 @@ void fdp_cleanup(graph_t * g)
     }
     fdp_cleanup_graph(g);
 }
+
+/**
+ * @dir lib/fdpgen
+ * @brief [Force-Directed Placement](https://en.wikipedia.org/wiki/Force-directed_graph_drawing) layout engine, API fdpgen/fdp.h
+ * @ingroup engines
+ *
+ * [FDP layout user manual](https://graphviz.org/docs/layouts/fdp/)
+ *
+ * Other @ref engines
+ */

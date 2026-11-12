@@ -7,6 +7,11 @@ BEGIN {
 }
 /^[^#]/{
   if ($1 != "") {
+    # Close previous file handle to avoid exhausting file descriptors on macOS
+    # https://gitlab.com/graphviz/graphviz/-/issues/1965
+    if (name) {
+      close(name);
+    }
     name = "colortmp/" $1 $2;
     gsub ("\"","",name);
   }

@@ -1,37 +1,29 @@
-/* $Id$Revision: */
-/* vim:set shiftwidth=4 ts=8: */
-
 /*************************************************************************
  * Copyright (c) 2011 AT&T Intellectual Property 
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
- * http://www.eclipse.org/legal/epl-v10.html
+ * https://www.eclipse.org/legal/epl-v10.html
  *
- * Contributors: See CVS logs. Details at http://www.graphviz.org/
+ * Contributors: Details at https://graphviz.org
  *************************************************************************/
-
- /* Implements graph.h  */
 
 #include "config.h"
 
-#include "rawgraph.h"
-#include "memory.h"
-#include "intset.h"
+#include <ortho/rawgraph.h>
+#include <stddef.h>
+#include <util/alloc.h>
+#include <util/list.h>
 
 #define UNSCANNED 0
 #define SCANNING  1
 #define SCANNED   2
 
-rawgraph*
-make_graph(int n)
-{
-    int i;
-    rawgraph* g = NEW(rawgraph);
+rawgraph *make_graph(size_t n) {
+    rawgraph* g = gv_alloc(sizeof(rawgraph));
     g->nvs = n;
-    g->vertices = N_NEW(n, vertex);
-    for(i=0;i<n;i++) {
-        g->vertices[i].adj_list = openIntSet ();
+    g->vertices = gv_calloc(n, sizeof(vertex));
+    for(size_t i = 0; i < n; ++i) {
         g->vertices[i].color = UNSCANNED;
     }
     return g;
@@ -40,109 +32,52 @@ make_graph(int n)
 void
 free_graph(rawgraph* g)
 {
-    int i;
-    for(i=0;i<g->nvs;i++)
-        dtclose(g->vertices[i].adj_list);
+    for(size_t i = 0; i < g->nvs; ++i)
+        LIST_FREE(&g->vertices[i].adj_list);
     free (g->vertices);
     free (g);
 }
  
-void 
-insert_edge(rawgraph* g, int v1, int v2)
-{
-    intitem obj;
-
-    obj.id = v2;
-    dtinsert(g->vertices[v1].adj_list,&obj);
+void insert_edge(rawgraph *g, size_t v1, size_t v2) {
+    if (!edge_exists(g, v1, v2)) {
+      LIST_APPEND(&g->vertices[v1].adj_list, v2);
+    }
 }
 
-void
-remove_redge(rawgraph* g, int v1, int v2)
-{
-    intitem obj;
-    obj.id = v2;
-    dtdelete (g->vertices[v1].adj_list, &obj);
-    obj.id = v1;
-    dtdelete (g->vertices[v2].adj_list, &obj);
+void remove_redge(rawgraph *g, size_t v1, size_t v2) {
+    LIST_REMOVE(&g->vertices[v1].adj_list, v2);
+    LIST_REMOVE(&g->vertices[v2].adj_list, v1);
 }
 
-int
-edge_exists(rawgraph* g, int v1, int v2)
-{
-    return (dtmatch (g->vertices[v1].adj_list, &v2) != 0);
+bool edge_exists(rawgraph *g, size_t v1, size_t v2) {
+  return LIST_CONTAINS(&g->vertices[v1].adj_list, v2);
 }
 
-typedef struct {
-  int top;
-  int* vals;
-} stack;
+typedef LIST(size_t) int_stack_t;
 
-static stack*
-mkStack (int i)
-{
-    stack* sp = NEW(stack);
-    sp->vals = N_NEW(i,int);
-    sp->top = -1;
-    return sp;
-}
-
-static void
-freeStack (stack* s)
-{
-    free (s->vals);
-    free (s);
-}
-
-static void
-pushStack (stack* s, int i)
-{
-    s->top++;
-    s->vals[s->top] = i;
-}
-
-static int
-popStack (stack* s)
-{
-    int v;
-
-    if (s->top == -1) return -1;
-    v = s->vals[s->top];
-    s->top--;
-    return v;
-}
-
-static int
-DFS_visit(rawgraph* g, int v, int time, stack* sp)
-{
-    Dt_t* adj;
-    Dtlink_t* link;
-    int id;
+static int DFS_visit(rawgraph *g, size_t v, int time, int_stack_t *sp) {
     vertex* vp;
 
     vp = g->vertices + v;
     vp->color = SCANNING;
-    /* g->vertices[v].d = time; */
-    adj = vp->adj_list;
+    const adj_list_t adj = vp->adj_list;
     time = time + 1;
 
-    for(link = dtflatten (adj); link; link = dtlink(adj,link)) {
-        id = ((intitem*)dtobj(adj,link))->id;
+    for (size_t i = 0; i < LIST_SIZE(&adj); ++i) {
+        const size_t id = LIST_GET(&adj, i);
         if(g->vertices[id].color == UNSCANNED)
             time = DFS_visit(g, id, time, sp);
     }
     vp->color = SCANNED;
-    /* g->vertices[v].f = time; */
-    pushStack (sp, v);
-    return (time + 1);
+    LIST_PUSH_BACK(sp, v);
+    return time + 1;
 }
 
 void
 top_sort(rawgraph* g)
 {
-    int i, v;
     int time = 0;
     int count = 0;
-    stack* sp;
 
     if (g->nvs == 0) return;
     if (g->nvs == 1) {
@@ -150,14 +85,16 @@ top_sort(rawgraph* g)
 		return;
 	}
 
-    sp = mkStack (g->nvs);
-    for(i=0;i<g->nvs;i++) {
+    int_stack_t sp = {0};
+    LIST_RESERVE(&sp, g->nvs);
+    for(size_t i = 0; i < g->nvs; ++i) {
         if(g->vertices[i].color == UNSCANNED)
-            time = DFS_visit(g, i, time, sp);
+            time = DFS_visit(g, i, time, &sp);
     }
-    while((v = popStack(sp)) >= 0) {
+    while (!LIST_IS_EMPTY(&sp)) {
+        const size_t v = LIST_POP_BACK(&sp);
         g->vertices[v].topsort_order = count;
         count++;
     }
-    freeStack (sp);
+    LIST_FREE(&sp);
 }

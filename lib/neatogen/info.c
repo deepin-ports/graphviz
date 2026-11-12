@@ -1,56 +1,45 @@
-/* $Id$ $Revision$ */
-/* vim:set shiftwidth=4 ts=8: */
-
 /*************************************************************************
  * Copyright (c) 2011 AT&T Intellectual Property 
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
- * http://www.eclipse.org/legal/epl-v10.html
+ * https://www.eclipse.org/legal/epl-v10.html
  *
- * Contributors: See CVS logs. Details at http://www.graphviz.org/
+ * Contributors: Details at https://graphviz.org
  *************************************************************************/
 
-#include "neato.h"
-#include <stdio.h>
-#include "mem.h"
-#include "info.h"
+#include "config.h"
 
+#include <neatogen/neato.h>
+#include <stdio.h>
+#include <neatogen/info.h>
+#include <stddef.h>
+#include <util/alloc.h>
 
 Info_t *nodeInfo;		/* Array of node info */
-static Freelist pfl;
 
-void infoinit()
-{
-    freeinit(&pfl, sizeof(PtItem));
-}
-
-/* compare:
- * returns -1 if p < q
- *          0 if p = q
- *          1 if p > q
+/* returns -1 if p < q.p
+ *          0 if p = q.p
+ *          1 if p > q.p
  * if q if NULL, returns -1
  * Ordering is by angle from -pi/2 to 3pi/4.
  * For equal angles (which should not happen in our context)
  * ordering is by closeness to origin.
  */
-static int compare(Point * o, PtItem * p, PtItem * q)
-{
+static int compare(Point o, Point p, Point q) {
     double x0;
     double y0;
     double x1;
     double y1;
     double a, b;
 
-    if (q == NULL)
-	return -1;
-    if ((p->p.x == q->p.x) && (p->p.y == q->p.y))
+    if (p.x == q.x && p.y == q.y)
 	return 0;
 
-    x0 = ((double) (p->p.x)) - ((double) (o->x));
-    y0 = ((double) (p->p.y)) - ((double) (o->y));
-    x1 = ((double) (q->p.x)) - ((double) (o->x));
-    y1 = ((double) (q->p.y)) - ((double) (o->y));
+    x0 = (double)p.x - (double)o.x;
+    y0 = (double)p.y - (double)o.y;
+    x1 = (double)q.x - (double)o.x;
+    y1 = (double)q.y - (double)o.y;
     if (x0 >= 0.0) {
 	if (x1 < 0.0)
 	    return -1;
@@ -110,98 +99,31 @@ static int compare(Point * o, PtItem * p, PtItem * q)
     }
 }
 
-#if 0				/* not used */
-static void printV(PtItem * vp)
-{
-    if (vp == NULL) {
-	fprintf(stderr, "<empty>\n");
-	return;
-    }
-
-    while (vp != NULL) {
-	fprintf(stderr, "(%.16f,%.16f)\n", vp->p.x, vp->p.y);
-	vp = vp->next;
-    }
-}
-
-static void error(Info_t * ip, Site * s, double x, double y)
-{
-    fprintf(stderr,
-	    "Unsorted vertex list for site %d (%.16f,%.16f), pt (%f,%f)\n",
-	    s->sitenbr, s->coord.x, s->coord.y, x, y);
-    printV(ip->verts);
-}
-#endif
-
-#if 0				/* not used */
-static int sorted(Point * origin, PtItem * vp)
-{
-    PtItem *next;
-
-    if (vp == NULL)
-	return 1;
-    next = vp->next;
-
-    while (next != NULL) {
-	if (compare(origin, vp, next) <= 0) {
-	    vp = next;
-	    next = next->next;
-	} else {
-	    fprintf(stderr, "(%.16f,%.16f) > (%.16f,%.16f)\n",
-		    vp->p.x, vp->p.y, next->p.x, next->p.y);
-	    return 0;
-	}
-    }
-
-    return 1;
-
-}
-#endif
-
 void addVertex(Site * s, double x, double y)
 {
     Info_t *ip;
-    PtItem *p;
-    PtItem *curr;
-    PtItem *prev;
-    Point *origin = &(s->coord);
-    PtItem tmp;
-    int cmp;
+    const Point origin_point = s->coord;
 
-    ip = nodeInfo + (s->sitenbr);
-    curr = ip->verts;
+    ip = nodeInfo + s->sitenbr;
 
-    tmp.p.x = x;
-    tmp.p.y = y;
+    const Point tmp = {.x = x, .y = y};
 
-    cmp = compare(origin, &tmp, curr);
-    if (cmp == 0)
-	return;
-    else if (cmp < 0) {
-	p = (PtItem *) getfree(&pfl);
-	p->p.x = x;
-	p->p.y = y;
-	p->next = curr;
-	ip->verts = p;
-	return;
+    size_t i;
+    for (i = 0; i < ip->n_verts; ++i) {
+	int cmp = compare(origin_point, tmp, ip->verts[i]);
+	if (cmp == 0) { // we already know this vertex; ignore
+	    return;
+	}
+	if (cmp < 0) { // found where to insert this vertex
+	    break;
+	}
     }
 
-    prev = curr;
-    curr = curr->next;
-    while ((cmp = compare(origin, &tmp, curr)) > 0) {
-	prev = curr;
-	curr = curr->next;
-    }
-    if (cmp == 0)
-	return;
-    p = (PtItem *) getfree(&pfl);
-    p->p.x = x;
-    p->p.y = y;
-    prev->next = p;
-    p->next = curr;
-
-    /* This test should be unnecessary */
-    /* if (!sorted(origin,ip->verts))  */
-    /* error (ip,s,x,y); */
-
+    ip->verts = gv_recalloc(ip->verts, ip->n_verts, ip->n_verts + 1,
+                            sizeof(ip->verts[0]));
+    // shuffle existing entries upwards to make room
+    memmove(&ip->verts[i + 1], &ip->verts[i],
+            (ip->n_verts - i) * sizeof(ip->verts[0]));
+    ip->verts[i] = tmp;
+    ++ip->n_verts;
 }

@@ -1,26 +1,23 @@
-/* $Id$ $Revision$ */
-/* vim:set shiftwidth=4 ts=8: */
-
 /*************************************************************************
  * Copyright (c) 2011 AT&T Intellectual Property 
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
- * http://www.eclipse.org/legal/epl-v10.html
+ * https://www.eclipse.org/legal/epl-v10.html
  *
- * Contributors: See CVS logs. Details at http://www.graphviz.org/
+ * Contributors: Details at https://graphviz.org
  *************************************************************************/
 
 #include "config.h"
-
+#include <assert.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <sys/stat.h>
+#include <util/agxbuf.h>
 
-#include "gvplugin_loadimage.h"
+#include <gvc/gvplugin_loadimage.h>
 
-#ifdef HAVE_GS
-#ifdef HAVE_PANGOCAIRO
 #include <ghostscript/iapi.h>
 #include <ghostscript/ierrors.h>
 #include <cairo/cairo.h>
@@ -43,15 +40,9 @@
 #define e_invalidid gs_error_invalidid
 #endif
 
-#ifdef _WIN32
-#define NUL_FILE "nul"
-#else
-#define NUL_FILE "/dev/null"
-#endif
-
-typedef enum {
+enum {
     FORMAT_PS_CAIRO, FORMAT_EPS_CAIRO,
-} format_type;
+};
 
 typedef struct gs_s {
     cairo_t* cr;
@@ -61,7 +52,7 @@ typedef struct gs_s {
 
 static void gvloadimage_gs_free(usershape_t *us)
 {
-    gs_t *gs = (gs_t*)us->data;
+    gs_t *gs = us->data;
 
     if (gs->pattern) cairo_pattern_destroy(gs->pattern);
     if (gs->surface) cairo_surface_destroy(gs->surface);
@@ -70,10 +61,12 @@ static void gvloadimage_gs_free(usershape_t *us)
 
 static int gs_writer(void *caller_handle, const char *str, int len)
 {
-    GVJ_t *job = (GVJ_t*)caller_handle;
+    GVJ_t *job = caller_handle;
 
-    if (job->common->verbose)
-    	return fwrite(str, 1, len, stderr);
+    if (job->common->verbose) {
+        assert(len >= 0);
+        return (int)fwrite(str, 1, (size_t)len, stderr);
+    }
     return len;
 }
 
@@ -92,19 +85,19 @@ static void gs_error(GVJ_t * job, const char *name, const char *funstr, int err)
     else
 	errsrc = "Ghostscript internal error";
 
-    job->common->errorfn("%s: %s() returned: %d \"%s\" (%s)\n",
-		name, funstr, err, gs_error_names[-err - 1], errsrc);
+    job->common->errorfn("%s: %s() returned: %d (%s)\n",
+		name, funstr, err, errsrc);
 }
 
 static int gvloadimage_process_file(GVJ_t *job, usershape_t *us, void *instance)
 {
-    int rc = 0, exit_code;
+    int rc = 0;
 
     if (! gvusershape_file_access(us)) {
 	job->common->errorfn("Failure to read shape file\n");
 	return -1;
     }
-    rc = gsapi_run_file(instance, us->name, -1, &exit_code);
+    rc = gsapi_run_file(instance, us->name, -1, &(int){0});
     if (rc) {
 	gs_error(job, us->name, "gsapi_run_file", rc);
     }
@@ -116,31 +109,39 @@ static int gvloadimage_process_surface(GVJ_t *job, usershape_t *us, gs_t *gs, vo
 {
     cairo_t *cr; /* temp cr for gs */
     int rc, rc2;
-    char width_height[20], dpi[10], cairo_context[30];
     char *gs_args[] = {
 	"dot",      /* actual value of argv[0] doesn't matter */
 	"-dQUIET",
 	"-dNOPAUSE",
 	"-sDEVICE=cairo",
-	cairo_context,
-	width_height,
-	dpi,
+	NULL,
+	NULL,
+	NULL,
     };
 #define GS_ARGC sizeof(gs_args)/sizeof(gs_args[0])
 
     gs->surface = cairo_surface_create_similar( 
 	cairo_get_target(gs->cr),
 	CAIRO_CONTENT_COLOR_ALPHA,
-	us->x + us->w,
-	us->y + us->h);
+	(int)(us->x + us->w),
+	(int)(us->y + us->h));
 
     cr = cairo_create(gs->surface);  /* temp context for gs */
 
-    sprintf(width_height, "-g%dx%d", us->x + us->w, us->y + us->h);
-    sprintf(dpi, "-r%d", us->dpi);
-    sprintf(cairo_context, "-sCairoContext=%p", cr);
+    agxbuf width_height = {0};
+    agxbprint(&width_height, "-g%0.fx%0.f", us->x + us->w, us->y + us->h);
+    gs_args[5] = agxbuse(&width_height);
+    agxbuf dpi = {0};
+    agxbprint(&dpi, "-r%d", us->dpi);
+    gs_args[6] = agxbuse(&dpi);
+    agxbuf cairo_context = {0};
+    agxbprint(&cairo_context, "-sCairoContext=%p", cr);
+    gs_args[4] = agxbuse(&cairo_context);
 
     rc = gsapi_init_with_args(instance, GS_ARGC, gs_args);
+    agxbfree(&cairo_context);
+    agxbfree(&dpi);
+    agxbfree(&width_height);
 
     cairo_destroy(cr); /* finished with temp context */
 
@@ -179,30 +180,30 @@ static cairo_pattern_t* gvloadimage_gs_load(GVJ_t * job, usershape_t *us)
 
     if (us->data) {
         if (us->datafree == gvloadimage_gs_free
-	&& ((gs_t*)(us->data))->cr == (cairo_t *)job->context)
-	    gs = (gs_t*)(us->data); /* use cached data */
+	&& ((gs_t*)(us->data))->cr == job->context)
+	    gs = us->data; /* use cached data */
 	else {
 	    us->datafree(us);        /* free incompatible cache data */
 	    us->data = NULL;
 	}
     }
     if (!gs) {
-	gs = (gs_t *)malloc(sizeof(gs_t));
+	gs = malloc(sizeof(gs_t));
 	if (!gs) {
 	    job->common->errorfn("malloc() failure\n");
 	    return NULL;
 	}
-	gs->cr = (cairo_t *)job->context;
+	gs->cr = job->context;
 	gs->surface = NULL;
 	gs->pattern = NULL;
 
 	/* cache this - even if things go bad below - avoids repeats */
-	us->data = (void*)gs;
+	us->data = gs;
 	us->datafree = gvloadimage_gs_free;
 
 #define GSAPI_REVISION_REQUIRED 863
 	rc = gsapi_revision(&gsapi_revision_info, sizeof(gsapi_revision_t));
-        if (rc && rc < sizeof(gsapi_revision_t)) {
+        if (rc && rc < (int)sizeof(gsapi_revision_t)) {
     	    job->common->errorfn("gs revision - struct too short %d\n", rc);
 	    return NULL;
         }
@@ -212,7 +213,7 @@ static cairo_pattern_t* gvloadimage_gs_load(GVJ_t * job, usershape_t *us)
 	    return NULL;
 	}
 
-	rc = gsapi_new_instance(&instance, (void*)job);
+	rc = gsapi_new_instance(&instance, job);
 	if (rc)
 	    gs_error(job, us->name, "gsapi_new_instance", rc);
 	else {
@@ -227,9 +228,11 @@ static cairo_pattern_t* gvloadimage_gs_load(GVJ_t * job, usershape_t *us)
     return gs->pattern;
 }
 
-static void gvloadimage_gs_cairo(GVJ_t * job, usershape_t *us, boxf b, boolean filled)
+static void gvloadimage_gs_cairo(GVJ_t * job, usershape_t *us, boxf b, bool filled)
 {
-    cairo_t *cr = (cairo_t *) job->context; /* target context */
+    (void)filled;
+
+    cairo_t *cr = job->context; // target context
     cairo_pattern_t *pattern = gvloadimage_gs_load(job, us);
 
     if (pattern) {
@@ -245,15 +248,9 @@ static void gvloadimage_gs_cairo(GVJ_t * job, usershape_t *us, boxf b, boolean f
 static gvloadimage_engine_t engine_cairo = {
     gvloadimage_gs_cairo
 };
-#endif
-#endif
 
 gvplugin_installed_t gvloadimage_gs_types[] = {
-#ifdef HAVE_GS
-#ifdef HAVE_PANGOCAIRO
     {FORMAT_PS_CAIRO,   "ps:cairo", 1, &engine_cairo, NULL},
     {FORMAT_EPS_CAIRO, "eps:cairo", 1, &engine_cairo, NULL},
-#endif
-#endif
     {0, NULL, 0, NULL, NULL}
 };
